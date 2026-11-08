@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "metadata": {
+    "config": {
+      "branches": 4,
+      "horizon": 6,
+      "min_start": 3,
+      "arrival_gap": 0.3,
+      "threshold": 1.0,
+      "seed": 13,
+      "ready_limit": 1,
+      "anchor_policy": "vote",
+      "anchor_threshold": null,
+      "bounded_threshold": 0.6,
+      "bounded_initial_steps": 2,
+      "bounded_initial_words": 1,
+      "bounded_skip_every": 1
+    },
+    "split": "dev",
+    "offset": 12,
+    "limit": 24,
+    "predictor": "Qwen/Qwen2.5-7B",
+    "translator": "Unbabel/TowerInstruct-7B-v0.2",
+    "predictor_device": "cuda:0",
+    "translator_device": "cuda:1",
+    "modes": [
+      "taf",
+      "bounded-1"
+    ],
+    "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+    "clock": "monotonic wall-clock, paced text replay",
+    "prediction_batch_size": 0,
+    "cpu_predictor_embedding": true,
+    "predictor_embedding_offload": {
+      "weight_bytes": 1089994752,
+      "weight_dtype": "torch.float16",
+      "weight_device": "cpu",
+      "execution_device": "cuda:0"
+    },
+    "predictor_dtype": "torch.float16",
+    "translator_dtype": "torch.float16",
+    "predictor_revision": "d149729398750b98c0af14eb82c78cfe92750796",
+    "translator_revision": "a240dfd3a0990c859ecfd4671e0ba9b923c04a43",
+    "torch": "2.11.0+cu130",
+    "gpu_names": [
+      "Tesla T4",
+      "Tesla T4"
+    ],
+    "code_sha256": {
+      "run_decoupled.py": "5eb8fb4a6936d4bc224e933d52dc1ea6cb2cfabb55fb57718cd0808f67fa5294",
+      "pipeline.py": "a607f5b3b971f4c7a12ed6a95f2608d0712ee51eb23ca5d76f1f1806e4448d76",
+      "checkpoint.py": "f745898db6305cc368fb633cbce475234287e7bcbca9b571d4b86d16b98d7faa",
+      "run_pfba.py": "d8461eaa466882dbaccbcd7423f39016d7eb800b29427b4bbb11b29ad8d855c3",
+      "cpu_embedding.py": "4deb457aae2401d15a5567f1041d2990f50f9f8a65f375d0cbff62cc6ef57b32"
+    }
+  },
+  "modes": [
+    "taf",
+    "bounded-1"
+  ],
+  "samples_sha256": "07f466aa84209704b3bba9b903b8f1735c988aa4499c709eb8ed9fab6b5f0bfb",
+  "sample_ids": [
+    "dev:0012",
+    "dev:0013",
+    "dev:0014",
+    "dev:0015",
+    "dev:0016",
+    "dev:0017",
+    "dev:0018",
+    "dev:0019",
+    "dev:0020",
+    "dev:0021",
+    "dev:0022",
+    "dev:0023",
+    "dev:0024",
+    "dev:0025",
+    "dev:0026",
+    "dev:0027",
+    "dev:0028",
+    "dev:0029",
+    "dev:0030",
+    "dev:0031",
+    "dev:0032",
+    "dev:0033",
+    "dev:0034",
+    "dev:0035"
+  ]
+}

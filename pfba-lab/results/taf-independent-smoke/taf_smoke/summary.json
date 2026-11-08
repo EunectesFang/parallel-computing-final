@@ -1,0 +1,62 @@
+{
+  "n_sentences": 8,
+  "n_source_units": 109,
+  "n_target_tokens": 297,
+  "n_target_words": 148,
+  "bleu": {
+    "score": 22.957488466614326,
+    "precisions": [
+      66.66666666666667,
+      40.0,
+      12.5,
+      8.333333333333334
+    ],
+    "brevity_penalty": 1.0,
+    "hyp_len": 6,
+    "ref_len": 6,
+    "implementation": "sacrebleu-2.5.1"
+  },
+  "comet": {
+    "score": 0.7236090451478958,
+    "status": "ok",
+    "n": 8,
+    "model": "Unbabel/wmt22-comet-da",
+    "kind": "substitution"
+  },
+  "laal": 2.1605619566511036,
+  "laal_no_cutoff": 2.1605619566511036,
+  "average_lagging": 1.935827029772011,
+  "timing": {
+    "n_steps": 101,
+    "wall_ms": 41933.795447,
+    "sum_flush_ms": 138.254538,
+    "sum_llm_sample_ms": 22563.72061,
+    "avg_llm_sample_ms": 223.403174,
+    "sum_mt_decode_ms": 19280.964921,
+    "avg_mt_decode_ms": 190.900643,
+    "sum_aggregate_ms": 69.854347,
+    "avg_aggregate_ms": 0.691627,
+    "sum_total_ms": 41921.549714,
+    "avg_total_ms": 415.064849
+  },
+  "tokens_per_second": 3.529,
+  "policy": {
+    "policy": "ralcp_taf",
+    "n": 4,
+    "horizon": 6,
+    "top_k": 10,
+    "agree_thres": 0.6,
+    "min_start": 1,
+    "beam_width": 4,
+    "effective_beam_width": 1,
+    "candidate_budget": 4,
+    "word_prefix_voting": true,
+    "exact_majority_gate": false,
+    "forced_committed_prefix": true,
+    "fresh_full_source_eos": true,
+    "final_flush": true,
+    "flush_added_tokens": 0,
+    "n_steps": 5,
+    "n_target_tokens": 13
+  }
+}

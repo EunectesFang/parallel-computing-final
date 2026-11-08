@@ -1,0 +1,19 @@
+{
+  "n_states": 48,
+  "compute_rate": 0.4791666666666667,
+  "mean_reward": 0.42643235554166764,
+  "mean_matched": 0.6041666666666666,
+  "mean_incorrect": 0.125,
+  "mean_cost_s": 0.08789051854166512,
+  "success_rate": 0.6086956521739131,
+  "brier_score": 0.2657949681839041,
+  "brier_rows": 192,
+  "action_histogram": {
+    "b2h2": 10,
+    "b2h6": 7,
+    "b4h2": 1,
+    "b4h6": 5,
+    "read": 25
+  },
+  "threshold": 0.25846010128986774
+}

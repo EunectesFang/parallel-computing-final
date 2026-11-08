@@ -1,0 +1,496 @@
+{
+  "config": {
+    "seed": 13,
+    "min_start": 3,
+    "arrival_gap": 0.3,
+    "ralcp_threshold": 0.6,
+    "incorrect_penalty": 1.0,
+    "cost_weight": 0.6,
+    "tune_fraction": 0.2,
+    "max_states_per_sentence": 4,
+    "max_states": 0,
+    "entropy_features": true,
+    "neural": true,
+    "device": "cuda"
+  },
+  "action_grid": [
+    "b2h2",
+    "b2h6",
+    "b4h2",
+    "b4h6"
+  ],
+  "baselines": {
+    "fixed_4_6": "b4h6",
+    "fixed_2_6": "b2h6",
+    "b_only": [
+      "b2h6",
+      "b4h6"
+    ],
+    "h_only": [
+      "b4h2",
+      "b4h6"
+    ]
+  },
+  "splits": {
+    "train_sentences": [
+      "dev:0000",
+      "dev:0002",
+      "dev:0003",
+      "dev:0004",
+      "dev:0005",
+      "dev:0006",
+      "dev:0009",
+      "dev:0010",
+      "dev:0012",
+      "dev:0013",
+      "dev:0014",
+      "dev:0015",
+      "dev:0016",
+      "dev:0018",
+      "dev:0019",
+      "dev:0020",
+      "dev:0021",
+      "dev:0022",
+      "dev:0023"
+    ],
+    "tune_sentences": [
+      "dev:0001",
+      "dev:0007",
+      "dev:0008",
+      "dev:0011",
+      "dev:0017"
+    ],
+    "test_sentences": [
+      "test:0000",
+      "test:0001",
+      "test:0002",
+      "test:0003",
+      "test:0004",
+      "test:0005",
+      "test:0006",
+      "test:0007",
+      "test:0008",
+      "test:0009",
+      "test:0010",
+      "test:0011"
+    ]
+  },
+  "label_counts": {
+    "train": 304,
+    "tune": 80,
+    "test": 192,
+    "states_train": 76,
+    "states_tune": 20,
+    "states_test": 48
+  },
+  "thresholds": {
+    "joint": -0.8066030327398256,
+    "b_only": -0.267174175371061,
+    "h_only": -1.1075116756517576,
+    "joint_neural": 0.2585878993575731
+  },
+  "offline": {
+    "joint": {
+      "n_states": 48,
+      "compute_rate": 0.9791666666666666,
+      "mean_reward": 0.8250394930874902,
+      "mean_matched": 1.4583333333333333,
+      "mean_incorrect": 0.5208333333333334,
+      "mean_cost_s": 0.18743417818751595,
+      "success_rate": 0.5106382978723404,
+      "brier_score": 0.25767767868449093,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 19,
+        "b2h6": 10,
+        "b4h2": 3,
+        "b4h6": 15,
+        "read": 1
+      },
+      "threshold": -0.8066030327398256
+    },
+    "b_only": {
+      "n_states": 48,
+      "compute_rate": 0.7916666666666666,
+      "mean_reward": 0.6255879626124738,
+      "mean_matched": 0.9375,
+      "mean_incorrect": 0.1875,
+      "mean_cost_s": 0.207353395645877,
+      "success_rate": 0.5,
+      "brier_score": 0.26139704707799166,
+      "brier_rows": 96,
+      "action_histogram": {
+        "b2h6": 10,
+        "b4h6": 28,
+        "read": 10
+      },
+      "threshold": -0.267174175371061
+    },
+    "h_only": {
+      "n_states": 48,
+      "compute_rate": 0.9375,
+      "mean_reward": 0.561940225979141,
+      "mean_matched": 1.1041666666666667,
+      "mean_incorrect": 0.4375,
+      "mean_cost_s": 0.17454406781254286,
+      "success_rate": 0.5333333333333333,
+      "brier_score": 0.25072420670526263,
+      "brier_rows": 96,
+      "action_histogram": {
+        "b4h2": 24,
+        "b4h6": 21,
+        "read": 3
+      },
+      "threshold": -1.1075116756517576
+    },
+    "joint_neural": {
+      "n_states": 48,
+      "compute_rate": 0.4791666666666667,
+      "mean_reward": 0.42643235554166764,
+      "mean_matched": 0.6041666666666666,
+      "mean_incorrect": 0.125,
+      "mean_cost_s": 0.08789051854166512,
+      "success_rate": 0.6086956521739131,
+      "brier_score": 0.26582710218088534,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 10,
+        "b2h6": 7,
+        "b4h2": 1,
+        "b4h6": 5,
+        "read": 25
+      },
+      "threshold": 0.2585878993575731
+    }
+  },
+  "rollouts": {
+    "fixed_4_6": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 22.647417687342855,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.822944367925326,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8179768323898315,
+          0.904744029045105,
+          0.9118427634239197,
+          0.8874475955963135,
+          0.7595133185386658,
+          0.8313193917274475,
+          0.6791390776634216,
+          0.7213037014007568,
+          0.7846791744232178,
+          0.8651050925254822,
+          0.8511176705360413
+        ]
+      },
+      "laal": 2.200812054421321,
+      "completion_s": {
+        "mean": 5.552955624083343,
+        "p95": 9.042149197999947
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.552955624083343,
+        "p95": 9.042149197999947
+      },
+      "inference_s": {
+        "mean": 4.354895762083307,
+        "total": 52.25874914499968
+      },
+      "feature_s": 0.0,
+      "predict_s": 37.66447895599987,
+      "translate_s": 14.585294344000147,
+      "action_histogram": {
+        "b4h6": 195,
+        "eos": 12
+      },
+      "policy": "fixed_4_6"
+    },
+    "fixed_2_6": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 16.48444458220903,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8288588474194208,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8869844079017639,
+          0.8875187635421753,
+          0.8760613203048706,
+          0.8758943676948547,
+          0.8278871178627014,
+          0.7920567393302917,
+          0.8237096667289734,
+          0.7612521052360535,
+          0.7417282462120056,
+          0.7667643427848816,
+          0.8667283058166504,
+          0.8397207856178284
+        ]
+      },
+      "laal": 2.202151115591778,
+      "completion_s": {
+        "mean": 5.519112939166676,
+        "p95": 9.04112197500001
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.519112939166676,
+        "p95": 9.04112197500001
+      },
+      "inference_s": {
+        "mean": 4.469233249000031,
+        "total": 53.63079898800038
+      },
+      "feature_s": 0.0,
+      "predict_s": 40.40726517299987,
+      "translate_s": 13.213953104999916,
+      "action_histogram": {
+        "b2h6": 195,
+        "eos": 12
+      },
+      "policy": "fixed_2_6"
+    },
+    "joint": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 20.97478370151935,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7951550036668777,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8869844079017639,
+          0.7711828351020813,
+          0.8978152871131897,
+          0.8967490196228027,
+          0.8710670471191406,
+          0.7595133185386658,
+          0.7998098731040955,
+          0.7698187828063965,
+          0.7038114666938782,
+          0.7516679167747498,
+          0.8651050925254822,
+          0.5683349967002869
+        ]
+      },
+      "laal": 1.9985431443674069,
+      "completion_s": {
+        "mean": 5.539447293833342,
+        "p95": 9.120511382999858
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.539447293833342,
+        "p95": 9.120511382999858
+      },
+      "inference_s": {
+        "mean": 4.086429685083317,
+        "total": 49.037156220999805
+      },
+      "feature_s": 9.532868417000088,
+      "predict_s": 28.559022837999976,
+      "translate_s": 10.937481541999944,
+      "action_histogram": {
+        "b2h2": 59,
+        "b2h6": 54,
+        "b4h2": 14,
+        "b4h6": 62,
+        "eos": 12,
+        "read": 6
+      },
+      "policy": "joint",
+      "threshold": -0.8066030327398256
+    },
+    "b_only": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 22.8816935193043,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8437170932690302,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8255980610847473,
+          0.8978152871131897,
+          0.9118427634239197,
+          0.9062685370445251,
+          0.7595133185386658,
+          0.878805935382843,
+          0.8426702618598938,
+          0.7817302346229553,
+          0.7429941892623901,
+          0.8651050925254822,
+          0.8511176705360413
+        ]
+      },
+      "laal": 3.176602447768047,
+      "completion_s": {
+        "mean": 5.622355982833416,
+        "p95": 9.404469083000299
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.622355982833416,
+        "p95": 9.404469083000299
+      },
+      "inference_s": {
+        "mean": 4.138511284833261,
+        "total": 49.66213541799914
+      },
+      "feature_s": 8.497383702998661,
+      "predict_s": 30.47934216399949,
+      "translate_s": 10.678463233001253,
+      "action_histogram": {
+        "b2h6": 61,
+        "b4h6": 88,
+        "eos": 12,
+        "read": 46
+      },
+      "policy": "b_only",
+      "threshold": -0.267174175371061
+    },
+    "h_only": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 18.121187413792562,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8082335342963537,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8302080035209656,
+          0.8526846170425415,
+          0.8967490196228027,
+          0.8468531966209412,
+          0.7595133185386658,
+          0.8243305087089539,
+          0.6860241293907166,
+          0.6852051615715027,
+          0.7532275915145874,
+          0.8651050925254822,
+          0.8377580046653748
+        ]
+      },
+      "laal": 1.7159535844049747,
+      "completion_s": {
+        "mean": 5.516860970666695,
+        "p95": 9.039498632999994
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.516860970666695,
+        "p95": 9.039498632999994
+      },
+      "inference_s": {
+        "mean": 3.8374294738332444,
+        "total": 46.04915368599893
+      },
+      "feature_s": 8.217994959000634,
+      "predict_s": 26.562455032000003,
+      "translate_s": 11.259980043999576,
+      "action_histogram": {
+        "b4h2": 88,
+        "b4h6": 100,
+        "eos": 12,
+        "read": 7
+      },
+      "policy": "h_only",
+      "threshold": -1.1075116756517576
+    },
+    "joint_neural": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 22.54301680083444,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8427513142426809,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8869845271110535,
+          0.8353613615036011,
+          0.9018498063087463,
+          0.9118427634239197,
+          0.9023460745811462,
+          0.7920567393302917,
+          0.878805935382843,
+          0.8516591191291809,
+          0.8489204049110413,
+          0.8685945868492126,
+          0.8662595152854919,
+          0.5683349370956421
+        ]
+      },
+      "laal": 3.7437287619166493,
+      "completion_s": {
+        "mean": 5.551422220999997,
+        "p95": 9.097296091999965
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.551422220999997,
+        "p95": 9.097296091999965
+      },
+      "inference_s": {
+        "mean": 2.0233330488331567,
+        "total": 24.27999658599788
+      },
+      "feature_s": 10.085305308997818,
+      "predict_s": 9.705870051999796,
+      "translate_s": 4.485966294000036,
+      "action_histogram": {
+        "b2h2": 17,
+        "b2h6": 34,
+        "b4h2": 1,
+        "b4h6": 8,
+        "eos": 12,
+        "read": 135
+      },
+      "policy": "joint_neural",
+      "threshold": 0.2585878993575731
+    }
+  }
+}

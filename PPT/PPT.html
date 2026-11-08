@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>基于 TAF 的同声传译并行调度</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    html { font-size: 18px; }
+    .deck { height: 100vh; height: 100dvh; position: relative; }
+    .slide {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      display: none;
+      position: absolute;
+      inset: 0;
+    }
+    .slide.active {
+      display: flex;
+      z-index: 1;
+      animation: page-in 0.28s ease;
+    }
+    @keyframes page-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+      }
+      html { scroll-behavior: auto; }
+    }
+
+    :root {
+      --display-font: "Noto Serif SC", "Noto Sans SC", "Newsreader", "Songti SC", serif;
+      --body-font: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono-font: "Inter", "Noto Sans SC", sans-serif;
+      --text-primary: #1A2E24;
+      --text-secondary: #5E6E62;
+      --bg-color: #F3EFE6;
+      --surface-color: #FFFcf7;
+      --accent-color: #0E6B45;
+      --accent-deep: #143D2C;
+      --border-color: #DDD4C4;
+      --color-positive: #0E6B45;
+      --color-negative: #8C4A3A;
+      --ink-soft: #E4EBE4;
+      --gold: #B08948;
+    }
+
+    body {
+      font-family: var(--body-font);
+      color: var(--text-primary);
+      background: var(--bg-color);
+      font-variant-numeric: tabular-nums;
+    }
+    .slide {
+      background:
+        linear-gradient(90deg, var(--accent-deep) 0 10px, transparent 10px),
+        var(--bg-color);
+    }
+    .slide::before,
+    .slide::after {
+      content: "";
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .slide::before {
+      top: 16px;
+      right: 18px;
+      border-top: 2px solid var(--accent-color);
+      border-right: 2px solid var(--accent-color);
+    }
+    .slide::after {
+      right: 18px;
+      bottom: 58px;
+      border-right: 2px solid var(--gold);
+      border-bottom: 2px solid var(--gold);
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 4px;
+      width: 0;
+      background: var(--accent-color);
+      z-index: 20;
+    }
+
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      padding: clamp(1.6rem, 4vh, 3.2rem) clamp(2.2rem, 5vw, 5.2rem) 6.4rem;
+      max-height: 100%;
+      overflow: hidden;
+    }
+
+    .kicker {
+      font-family: var(--body-font);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 0.85rem;
+    }
+
+    h1, h2 { font-family: var(--display-font); font-weight: 500; letter-spacing: 0; }
+    h1 { font-size: clamp(2.6rem, 5.4vw, 4.4rem); line-height: 1.18; }
+    h2 {
+      font-size: clamp(1.85rem, 2.8vw, 2.45rem);
+      line-height: 1.25;
+      margin-bottom: 0.85rem;
+      color: var(--accent-deep);
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border-color);
+      position: relative;
+    }
+    h2::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: -1px;
+      width: 4.2rem;
+      height: 3px;
+      background: var(--accent-color);
+    }
+    p, li { font-size: clamp(1.05rem, 1.4vw, 1.2rem); line-height: 1.55; }
+    .lead { color: var(--text-secondary); font-size: clamp(1.05rem, 1.6vw, 1.35rem); margin-top: 1.4rem; max-width: 36rem; }
+
+    .footer {
+      position: absolute;
+      left: clamp(2.4rem, 6vw, 6.5rem);
+      right: clamp(2.4rem, 6vw, 6.5rem);
+      bottom: 4.3rem;
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }
+
+    ul { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; }
+    ul li { padding-left: 0.95rem; position: relative; }
+    ul li::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-color);
+      position: absolute;
+      left: 0;
+      top: 0.55em;
+    }
+
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; min-height: 0; }
+    .split { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 1.6rem; align-items: start; min-height: 0; }
+    .stack { display: flex; flex-direction: column; gap: 0.7rem; min-height: 0; }
+
+    h3 {
+      font-family: var(--body-font);
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 0.7rem;
+    }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 0.62rem 0.75rem 0.62rem 0;
+      border-bottom: 1px solid var(--border-color);
+      font-size: clamp(0.98rem, 1.22vw, 1.1rem);
+      line-height: 1.45;
+    }
+    th {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--text-primary);
+      padding-bottom: 0.45rem;
+    }
+    td:first-child, th:first-child { padding-right: 1rem; white-space: nowrap; }
+    .dense td, .dense th { padding-top: 0.48rem; padding-bottom: 0.48rem; }
+    .dense td:first-child { white-space: normal; width: 8.2rem; }
+
+    .num { font-variant-numeric: tabular-nums; font-weight: 500; }
+    .bar {
+      display: block;
+      height: 3px;
+      margin-top: 0.35rem;
+      background: var(--ink-soft);
+      position: relative;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: var(--accent-color);
+    }
+    .bar.base > span { background: #B7C2B6; }
+
+    ol.steps { list-style: none; display: flex; flex-direction: column; gap: 0.42rem; counter-reset: step; }
+    ol.steps li {
+      counter-increment: step;
+      padding-left: 1.7rem;
+      position: relative;
+      font-size: clamp(1rem, 1.25vw, 1.12rem);
+      line-height: 1.45;
+    }
+    ol.steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0.05rem;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent-color);
+    }
+
+    .note { margin-top: 0.7rem; color: var(--text-secondary); font-size: 1.05rem; }
+    .idea { margin-bottom: 0.65rem; }
+    .card {
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
+      border-left: 4px solid var(--accent-color);
+      padding: 0.75rem 0.9rem 0.8rem;
+    }
+    .card h3 { margin-bottom: 0.35rem; color: var(--accent-deep); letter-spacing: 0.08em; }
+    .card p, .card li { font-size: 1.02rem; line-height: 1.5; }
+    .card + .card { margin-top: 0.55rem; }
+    .method-list { display: flex; flex-direction: column; gap: 0.4rem; }
+    .method-list .card { margin-top: 0; padding: 0.5rem 0.8rem 0.55rem; }
+    .methods-slide h2 { margin-bottom: 0.4rem; }
+    .metrics-slide .idea,
+    .methods-slide .idea { margin-bottom: 0.4rem; }
+    .metrics-slide .metric-group { margin-top: 0.55rem; gap: 0.7rem; }
+    .metrics-slide .card { padding: 0.7rem 0.85rem 0.75rem; margin-top: 0; height: 100%; }
+    .metrics-slide .metric-name { font-size: 1.5rem; }
+    .metrics-slide .metric-en { font-size: 1rem; min-height: 2.6em; }
+    .metrics-slide .card p { font-size: 1.06rem; line-height: 1.5; }
+    .metrics-slide .metric-label { font-size: 1.28rem; }
+    .methods-slide .card p { font-size: 0.98rem; line-height: 1.42; }
+    .method-head {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.15rem;
+      margin-bottom: 0.4rem;
+    }
+    .method-head h3 {
+      margin: 0;
+      font-family: var(--display-font);
+      font-size: 1.28rem;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--accent-deep);
+    }
+    .method-names { color: var(--gold); font-size: 0.98rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; min-height: 0; }
+    .metric-name {
+      font-family: var(--display-font);
+      font-size: 1.55rem;
+      color: var(--accent-deep);
+      line-height: 1.2;
+    }
+    .metric-en { color: var(--gold); font-size: 0.92rem; letter-spacing: 0.04em; margin: 0.2rem 0 0.4rem; }
+    .metric-group {
+      display: grid;
+      grid-template-columns: 6.8rem 1fr;
+      gap: 0.75rem;
+      align-items: stretch;
+      margin-top: 0.75rem;
+    }
+    .metric-label {
+      margin: 0;
+      background: var(--accent-deep);
+      color: #F6F3EC;
+      font-family: var(--display-font);
+      font-size: 1.2rem;
+      line-height: 1.35;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0.7rem 0.4rem;
+    }
+    .example {
+      margin-top: 0.65rem;
+      padding: 0.55rem 0.75rem;
+      background: #F7F3EA;
+      border: 1px dashed var(--gold);
+      font-size: 1rem;
+      line-height: 1.45;
+    }
+    .callout {
+      margin-top: 0.75rem;
+      padding: 0.7rem 0.9rem;
+      background: var(--accent-deep);
+      color: #F6F3EC;
+      font-size: 1.05rem;
+      line-height: 1.5;
+    }
+    .callout + .callout { margin-top: 0.45rem; background: var(--surface-color); color: var(--text-primary); border: 1px solid var(--border-color); }
+    table { background: var(--surface-color); }
+    th, td { padding-left: 0.7rem; }
+    .pager {
+      position: fixed;
+      z-index: 30;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      background: var(--accent-deep);
+      color: #F6F3EC;
+      padding: 0.35rem 0.45rem;
+      border-radius: 999px;
+    }
+    .pager button {
+      appearance: none;
+      border: 0;
+      background: var(--accent-color);
+      color: #fff;
+      font-family: var(--body-font);
+      font-size: 13px;
+      padding: 0.38rem 0.85rem;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .pager button:disabled { opacity: 0.35; cursor: default; }
+    .pager span { min-width: 4.5rem; text-align: center; font-size: 13px; letter-spacing: 0.08em; }
+
+    .figure { min-height: 0; display: flex; justify-content: center; }
+    .diagram { width: 100%; height: auto; max-height: calc(100dvh - 12rem); display: block; }
+    .diagram text { font-family: var(--body-font); fill: var(--text-primary); }
+    .diagram .muted { fill: var(--text-secondary); }
+    .diagram .box { fill: #fff; stroke: var(--text-primary); stroke-width: 1.25; }
+    .diagram .soft { fill: #F4F7F4; stroke: var(--accent-color); stroke-width: 1.25; }
+    .diagram .wait { fill: #F7F5F2; stroke: #8C8174; stroke-width: 1.25; }
+    .diagram .line { fill: none; stroke: var(--text-primary); stroke-width: 1.25; }
+    .diagram .stage { fill: none; stroke: var(--border-color); stroke-width: 1; }
+
+    .refs { list-style: none; display: flex; flex-direction: column; gap: 0.7rem; }
+    .refs li { padding-left: 0; font-size: 1.08rem; line-height: 1.5; color: var(--text-primary); }
+    .refs li::before { display: none; }
+    .refs span { color: var(--text-secondary); margin-right: 0.55rem; }
+
+    .title-slide { background: var(--accent-deep); }
+    .title-slide::before,
+    .title-slide::after { display: none; }
+    .title-slide .slide-content {
+      display: flex;
+      padding: 1.25rem 1.25rem 4.8rem;
+      height: 100%;
+    }
+    .cover {
+      flex: 1;
+      background: var(--bg-color);
+      padding: 2.2rem 3rem 2.4rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      position: relative;
+    }
+    .cover::before,
+    .cover::after {
+      content: "";
+      position: absolute;
+      width: 26px;
+      height: 26px;
+    }
+    .cover::before {
+      top: 1.1rem;
+      left: 1.1rem;
+      border-top: 2px solid var(--gold);
+      border-left: 2px solid var(--gold);
+    }
+    .cover::after {
+      right: 1.1rem;
+      bottom: 1.1rem;
+      border-right: 2px solid var(--accent-color);
+      border-bottom: 2px solid var(--accent-color);
+    }
+    .cover-kicker {
+      position: absolute;
+      top: 2.2rem;
+      left: 3rem;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      color: var(--accent-color);
+    }
+    .cover-lockup { width: max-content; max-width: 100%; }
+    .cover h1 {
+      font-size: clamp(3rem, 5vw, 4.4rem);
+      line-height: 1.12;
+      color: var(--accent-deep);
+      white-space: nowrap;
+    }
+    .cover-sub {
+      margin-top: 1rem;
+      padding-top: 0.85rem;
+      border-top: 3px solid var(--accent-color);
+      font-family: var(--display-font);
+      font-size: clamp(1.35rem, 2vw, 1.75rem);
+      line-height: 1.45;
+      color: var(--text-primary);
+      white-space: nowrap;
+    }
+    .cover-meta {
+      margin-top: 1.15rem;
+      font-size: 1.08rem;
+      color: var(--text-secondary);
+      letter-spacing: 0.04em;
+    }
+    .title-slide .footer { display: none; }
+
+    @media (max-width: 900px) {
+      .cols, .split, .metric-group { grid-template-columns: 1fr; }
+      .cover h1, .cover-sub { white-space: normal; }
+      .diagram { max-height: 42vh; }
+    }
+    @media (max-height: 760px) {
+      .slide-content { padding-top: 1.35rem; }
+      h2 { margin-bottom: 0.55rem; }
+      th, td { padding-top: 0.38rem; padding-bottom: 0.38rem; }
+    }
+    @media (max-height: 700px) {
+      .kicker { margin-bottom: 0.35rem; }
+      h2 { font-size: 1.6rem; margin-bottom: 0.35rem; }
+      .metrics-slide .metric-name { font-size: 1.15rem; }
+      .metrics-slide .metric-en,
+      .method-names { font-size: 0.84rem; margin-top: 0; margin-bottom: 0.2rem; }
+      .metrics-slide .card p { font-size: 0.9rem; line-height: 1.32; }
+      .methods-slide .card p { font-size: 0.86rem; line-height: 1.28; }
+      .method-list { gap: 0.28rem; }
+      .metrics-slide .card,
+      .method-list .card { padding: 0.4rem 0.65rem; }
+      .metric-group { margin-top: 0.35rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+
+  <section class="slide title-slide active">
+    <div class="slide-content">
+      <div class="cover">
+        <p class="cover-kicker">选题报告</p>
+        <div class="cover-lockup">
+          <h1>并行计算选题</h1>
+          <p class="cover-sub">基于 TAF 的同声传译并行调度</p>
+          <p class="cover-meta">大数据并行计算 · 2026 秋季</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">02</p>
+      <h2>研究背景与主要难点</h2>
+      <div class="cols">
+        <div class="card">
+          <h3>研究背景</h3>
+          <ul>
+            <li>同声传译要求原文还没说完，翻译就要同时进行。听众听到的是逐词出来的译文，而不是等整句结束再一次性播出。</li>
+            <li>机器同传把这件事做成边听边决定：每到一个词，系统只做一次选择，继续听（Read），或说出下一个译词（Write）。</li>
+          </ul>
+          <p class="example">例：德语 <em>Ich will, dass du nach oben gehst</em>。动词 <em>gehst</em> 在句末，对应的英语 <em>go</em> 却要更早出现。一直等到这个动词，耽搁就会积到句末。</p>
+        </div>
+        <div>
+          <h3>主要难点</h3>
+          <div class="card"><h3>词序</h3><p>译文里要先说的词，在原文中往往还没出现。一直等到这个词，耽搁会积到句末。</p></div>
+          <div class="card"><h3>歧义</h3><p>一句话怎么理解，要看后面的内容。修饰谁、取哪个意思，都可能随后文改变。后文还没到就先翻译，可能翻错。</p></div>
+          <div class="card"><h3>不能改口</h3><p>已经说出口的译文不能收回。说错了，后面也无法改掉。因此每一步都是在“再听一个词”和“现在把这个词说出去”之间作决定。</p></div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>研究背景</span><span>02 / 10</span></div>
+  </section>
+
+  <section class="slide metrics-slide">
+    <div class="slide-content">
+      <p class="kicker">03</p>
+      <h2>两类延迟与翻译质量</h2>
+      <p class="idea">同声传译存在两类延迟。质量则要同时看字面重合和语义评分，避免只凭一个分数下结论。</p>
+      <div class="metric-group">
+        <p class="metric-label">两类延迟</p>
+        <div class="grid-2">
+        <div class="card">
+          <div class="metric-name">LAAL</div>
+          <div class="metric-en">Length-Adaptive Average Lagging · 内容延迟</div>
+          <p>还要再听多少原文，才把译文说出去。每个译词出现时，统计原文已经多听了多少个词，再按句子长短校正。按原文词数计，越小表示开口越早。它记录的是听到哪里、说到哪里，不记录计算花了多久。</p>
+        </div>
+        <div class="card">
+          <div class="metric-name">墙钟时间</div>
+          <div class="metric-en">Wall-clock Time · 计算延迟</div>
+          <p>为了预测后文、翻译多种可能，实际要算多久。从原文按固定间隔到来，到整句译文完成，量的是真实经过的时间。同时统计预测和翻译各调用了多少次，并报告平均每句用时和较慢句子的第 95 百分位。</p>
+        </div>
+        </div>
+      </div>
+      <div class="metric-group">
+        <p class="metric-label">翻译质量</p>
+        <div class="grid-2">
+        <div class="card">
+          <div class="metric-name">BLEU</div>
+          <div class="metric-en">词组重合 · 越高越好</div>
+          <p>把系统译文和标准答案切成连续词组，看重合多少，并考虑译文是否过短。它衡量字面是否接近。意思相同但用词不同时，分数会偏低，所以不能单独代表翻译质量。</p>
+        </div>
+        <div class="card">
+          <div class="metric-name">COMET</div>
+          <div class="metric-en">评价模型打分 · 越高越好</div>
+          <p>用在人工评分数据上训练过的模型，综合原文、译文和标准答案给一个质量分。它能补上 BLEU 看不出的语义差别。本课题报告质量时，两项一起看。</p>
+        </div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>评价指标</span><span>03 / 10</span></div>
+  </section>
+
+  <section class="slide methods-slide">
+    <div class="slide-content">
+      <p class="kicker">04</p>
+      <h2>机器同传的常见方法</h2>
+      <p class="idea">下面三类做法，都只根据已经听到的内容决定继续听，还是现在开口。</p>
+      <div class="method-list">
+        <div class="card">
+          <div class="method-head"><h3>固定节奏</h3><span class="method-names">Wait-k，Wait-k-Stride-N</span></div>
+          <p>先听 k 个词，之后按固定步数轮流听和说。等待长度事先定死，不看这句话好不好猜。难猜的句子和容易猜的句子用同一套步数，可能说得太早，也可能一直等到句末。</p>
+        </div>
+        <div class="card">
+          <div class="method-head"><h3>等译文稳定再开口</h3><span class="method-names">Local Agreement，Hold-n，RALCP</span></div>
+          <p>每听到一个新词，就用已经听到的原文再译一次。几次译文的开头相同，才把这个开头说出去。RALCP 还要求大多数候选同意，并达到设定比例。它不单独写出还没听到的后文。</p>
+        </div>
+        <div class="card">
+          <div class="method-head"><h3>训练出来的策略</h3><span class="method-names">MMA，ITST，SM2</span></div>
+          <p>用“半句原文、半句译文”训练，按当前这句话决定继续听还是往下说。对后文的猜测留在模型参数里，不能单独取出来，也不能把几条可能的后文放在一起并行翻译。</p>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>常见方法</span><span>04 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">05</p>
+      <h2>目前最优算法 TAF</h2>
+      <div class="split">
+        <div class="stack">
+          <p class="idea">思路：人工同传会根据句子结构和话题，提前猜测还没听到的名词、动词，从而更早开口。</p>
+          <h3>决策流程</h3>
+          <ol class="steps">
+            <li>输入是已经听到的原文，以及已经说出的译文。</li>
+            <li>大语言模型对未来进行预测：写出 n 种可能的后续原文，每种最长 l 个词。</li>
+            <li>翻译模型分别翻译“已经听到的原文 + 后续原文”。</li>
+            <li>查看这些译文中的下一个词是否重复，计算同意比例。</li>
+            <li>同意比例达到阈值 τ，就输出翻译；否则继续听下一个原文。</li>
+          </ol>
+        </div>
+        <div class="figure">
+        <svg class="diagram" viewBox="0 0 560 640" role="img" aria-label="TAF 决策流程示意图">
+          <rect class="box" x="28" y="8" width="240" height="52"></rect>
+          <text x="148" y="39" text-anchor="middle" font-size="15">已听到的原文</text>
+          <rect class="box" x="292" y="8" width="240" height="52"></rect>
+          <text x="412" y="39" text-anchor="middle" font-size="15">已说出的译文</text>
+          <path class="line" d="M148 60 V86 H280 V108"></path>
+          <path class="line" d="M412 60 V86 H280"></path>
+          <polygon points="274,108 286,108 280,116" fill="#1E3322"></polygon>
+
+          <rect class="soft" x="90" y="118" width="380" height="64"></rect>
+          <text x="280" y="144" text-anchor="middle" font-size="15">语言模型</text>
+          <text class="muted" x="280" y="166" text-anchor="middle" font-size="13">写出 n 种后文，每种最长 l 个词</text>
+
+          <path class="line" d="M280 182 V206"></path>
+          <path class="line" d="M100 206 H460"></path>
+          <path class="line" d="M100 206 V228"></path>
+          <path class="line" d="M280 206 V228"></path>
+          <path class="line" d="M460 206 V228"></path>
+
+          <rect class="box" x="36" y="228" width="128" height="44"></rect>
+          <text x="100" y="255" text-anchor="middle" font-size="14">后文 1</text>
+          <rect class="box" x="216" y="228" width="128" height="44"></rect>
+          <text x="280" y="255" text-anchor="middle" font-size="14">后文 2</text>
+          <rect class="box" x="396" y="228" width="128" height="44"></rect>
+          <text x="460" y="255" text-anchor="middle" font-size="14">后文 n</text>
+
+          <path class="line" d="M100 272 V300"></path>
+          <path class="line" d="M280 272 V300"></path>
+          <path class="line" d="M460 272 V300"></path>
+
+          <rect class="box" x="36" y="300" width="128" height="52"></rect>
+          <text x="100" y="322" text-anchor="middle" font-size="13">翻译</text>
+          <text class="muted" x="100" y="340" text-anchor="middle" font-size="12">原文 + 后文 1</text>
+          <rect class="box" x="216" y="300" width="128" height="52"></rect>
+          <text x="280" y="322" text-anchor="middle" font-size="13">翻译</text>
+          <text class="muted" x="280" y="340" text-anchor="middle" font-size="12">原文 + 后文 2</text>
+          <rect class="box" x="396" y="300" width="128" height="52"></rect>
+          <text x="460" y="322" text-anchor="middle" font-size="13">翻译</text>
+          <text class="muted" x="460" y="340" text-anchor="middle" font-size="12">原文 + 后文 n</text>
+
+          <path class="line" d="M100 352 V378 H280 V404"></path>
+          <path class="line" d="M280 352 V404"></path>
+          <path class="line" d="M460 352 V378 H280"></path>
+          <polygon points="274,404 286,404 280,412" fill="#1E3322"></polygon>
+
+          <rect class="box" x="120" y="414" width="320" height="52"></rect>
+          <text x="280" y="445" text-anchor="middle" font-size="15">计算下一个译词的同意比例</text>
+
+          <path class="line" d="M200 466 V492"></path>
+          <path class="line" d="M360 466 V492"></path>
+          <polygon points="194,492 206,492 200,500" fill="#1E3322"></polygon>
+          <polygon points="354,492 366,492 360,500" fill="#1E3322"></polygon>
+
+          <rect class="soft" x="48" y="502" width="210" height="72"></rect>
+          <text x="153" y="530" text-anchor="middle" font-size="14">同意比例 ≥ τ</text>
+          <text x="153" y="552" text-anchor="middle" font-size="14">输出译文</text>
+          <rect class="wait" x="302" y="502" width="210" height="72"></rect>
+          <text x="407" y="530" text-anchor="middle" font-size="14">同意比例 &lt; τ</text>
+          <text x="407" y="552" text-anchor="middle" font-size="14">继续听下一个原文</text>
+        </svg>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>TAF</span><span>05 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">06</p>
+      <h2>我们的选题</h2>
+      <p class="idea">TAF 存在重大问题：预测原文的 LLM 虽然改善了 LAAL，但带来了计算延迟的上升。</p>
+      <table>
+        <thead>
+          <tr><th>翻译模型</th><th>参数量</th><th>不使用 TAF</th><th>使用 TAF</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Transformer-Big</td>
+            <td class="num">0.2B</td>
+            <td><span class="num">72 ms</span><span class="bar base"><span style="width:4.8%"></span></span></td>
+            <td><span class="num">1067 ms</span><span class="bar"><span style="width:70.8%"></span></span></td>
+          </tr>
+          <tr>
+            <td>MADLAD-400</td>
+            <td class="num">3B</td>
+            <td><span class="num">383 ms</span><span class="bar base"><span style="width:25.4%"></span></span></td>
+            <td><span class="num">1339 ms</span><span class="bar"><span style="width:88.9%"></span></span></td>
+          </tr>
+          <tr>
+            <td>TowerInstruct</td>
+            <td class="num">7B</td>
+            <td><span class="num">905 ms</span><span class="bar base"><span style="width:60.1%"></span></span></td>
+            <td><span class="num">1506 ms</span><span class="bar"><span style="width:100%"></span></span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">计划在 TAF 上进行并行化的改进，将预测原文和翻译进行解耦、LLM 的 KV cache 复用，实现翻译质量的提升和两类延迟的下降。</p>
+      <p class="note">具体方案：架构上的改进提出 PFBA 和动态调控；计算上的改进为 KV cache 复用。</p>
+    </div>
+    <div class="footer"><span>选题</span><span>06 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">07</p>
+      <h2>架构上的改进：PFBA</h2>
+      <div class="split">
+        <div class="stack">
+          <p class="idea">PFBA（Parallel Future-Branch Anticipation，并行未来分支推测）不等后文确定，而是把几种可能的后文同时翻译，只说出对这几种后文都成立的部分。</p>
+          <ul>
+            <li>采样未来：根据已经听到的原文，写出 B 种可能的后续，每种长度为 h。</li>
+            <li>并行翻译：每一种「已经听到的原文 + 一种后续」各翻一次。这些分支互相独立，可以一起算。</li>
+            <li>一致提交：取这些译文的最长公共开头，只把这段说出去。后面不一致的部分留在草稿里，不说。</li>
+            <li>到达验证：真正的后文到达后，找和它对得上的分支并保留草稿；对不上就丢掉，按真实听到的内容重译。</li>
+          </ul>
+        </div>
+        <div class="figure">
+        <svg class="diagram" style="max-height: 24rem;" viewBox="0 0 520 560" role="img" aria-label="PFBA：采样未来、并行翻译、提交公共开头、到达后验证">
+          <rect class="box" x="140" y="4" width="240" height="44"></rect>
+          <text x="260" y="32" text-anchor="middle" font-size="15">已听到的原文</text>
+          <path class="line" d="M260 48 V66"></path>
+          <polygon points="254,66 266,66 260,74" fill="#1E3322"></polygon>
+
+          <rect class="soft" x="70" y="78" width="380" height="52"></rect>
+          <text x="260" y="100" text-anchor="middle" font-size="15">写出 B 种后续</text>
+          <text class="muted" x="260" y="120" text-anchor="middle" font-size="13">每种长度为 h</text>
+
+          <path class="line" d="M120 130 V156"></path>
+          <path class="line" d="M260 130 V156"></path>
+          <path class="line" d="M400 130 V156"></path>
+          <polygon points="114,156 126,156 120,164" fill="#1E3322"></polygon>
+          <polygon points="254,156 266,156 260,164" fill="#1E3322"></polygon>
+          <polygon points="394,156 406,156 400,164" fill="#1E3322"></polygon>
+          <rect class="box" x="70" y="166" width="100" height="40"></rect>
+          <text x="120" y="191" text-anchor="middle" font-size="14">后续 1</text>
+          <rect class="box" x="210" y="166" width="100" height="40"></rect>
+          <text x="260" y="191" text-anchor="middle" font-size="14">后续 2</text>
+          <rect class="box" x="350" y="166" width="100" height="40"></rect>
+          <text x="400" y="191" text-anchor="middle" font-size="14">后续 B</text>
+
+          <path class="line" d="M120 206 V228 H260"></path>
+          <path class="line" d="M260 206 V228"></path>
+          <path class="line" d="M400 206 V228 H260"></path>
+          <polygon points="254,228 266,228 260,236" fill="#1E3322"></polygon>
+          <rect class="soft" x="70" y="240" width="380" height="64"></rect>
+          <text x="260" y="266" text-anchor="middle" font-size="15">并行翻译</text>
+          <text class="muted" x="260" y="288" text-anchor="middle" font-size="13">已听到的原文 + 每种后续</text>
+
+          <path class="line" d="M260 304 V326"></path>
+          <polygon points="254,326 266,326 260,334" fill="#1E3322"></polygon>
+          <rect class="box" x="90" y="338" width="340" height="52"></rect>
+          <text x="260" y="362" text-anchor="middle" font-size="15">最长公共开头</text>
+          <text class="muted" x="260" y="380" text-anchor="middle" font-size="13">只把这段说出去</text>
+
+          <path class="line" d="M260 390 V412"></path>
+          <polygon points="254,412 266,412 260,420" fill="#1E3322"></polygon>
+          <text class="muted" x="260" y="438" text-anchor="middle" font-size="13">真正的后文到达</text>
+          <path class="line" d="M260 446 V464 H130 V482"></path>
+          <path class="line" d="M260 464 H390 V482"></path>
+          <polygon points="124,482 136,482 130,490" fill="#1E3322"></polygon>
+          <polygon points="384,482 396,482 390,490" fill="#1E3322"></polygon>
+          <rect class="soft" x="30" y="492" width="200" height="56"></rect>
+          <text x="130" y="516" text-anchor="middle" font-size="14">对得上</text>
+          <text class="muted" x="130" y="536" text-anchor="middle" font-size="12">保留这条草稿</text>
+          <rect class="wait" x="290" y="492" width="200" height="56"></rect>
+          <text x="390" y="516" text-anchor="middle" font-size="14">对不上</text>
+          <text class="muted" x="390" y="536" text-anchor="middle" font-size="12">按真实听到的重译</text>
+        </svg>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>PFBA</span><span>07 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">08</p>
+      <h2>架构上的改进：动态调控</h2>
+      <p class="idea">动态调控决定这一步猜几条、每条猜多长，以及要不要继续翻译。</p>
+      <div class="split">
+        <ul>
+          <li>调控器是一个小型神经网络。输入只来自已经听到的原文和已经说出的译文，包括听到的长度、已说出的词数，以及下一个词的不确定程度。它看不到整句原文。</li>
+          <li>输出为继续听，或输出 (B, h)。B 为预测原文的数量，h 为每条长度。</li>
+          <li>预测模型的参数远大于翻译模型时，翻译所占时间少，动态调控倾向于将猜到的后文都进行翻译。翻译模型远大于预测模型时，动态调控倾向于只翻译同意比例较高的后文。</li>
+        </ul>
+        <div class="figure">
+          <svg class="diagram" style="max-height: 24rem; width: auto;" viewBox="0 0 460 420" role="img" aria-label="动态调控根据已听到的内容和模型大小，决定继续听或给出猜测条数和长度">
+            <rect class="box" x="20" y="16" width="190" height="52"></rect>
+            <text x="115" y="47" text-anchor="middle" font-size="14">已经听到的原文</text>
+            <rect class="box" x="250" y="16" width="190" height="52"></rect>
+            <text x="345" y="47" text-anchor="middle" font-size="14">已经说出的译文</text>
+            <path class="line" d="M115 68 V96 H230 V124"></path>
+            <path class="line" d="M345 68 V96 H230 V124"></path>
+            <polygon points="224,124 236,124 230,134" fill="#1E3322"></polygon>
+            <rect class="soft" x="70" y="136" width="320" height="78"></rect>
+            <text x="230" y="166" text-anchor="middle" font-size="15">小型神经网络</text>
+            <text class="muted" x="230" y="190" text-anchor="middle" font-size="13">长度、词数、下一个词的不确定程度</text>
+            <path class="line" d="M230 214 V246"></path>
+            <polygon points="224,246 236,246 230,256" fill="#1E3322"></polygon>
+            <rect class="soft" x="20" y="258" width="190" height="58"></rect>
+            <text x="115" y="292" text-anchor="middle" font-size="14">继续听</text>
+            <rect class="box" x="250" y="258" width="190" height="58"></rect>
+            <text x="345" y="282" text-anchor="middle" font-size="14">输出 (B, h)</text>
+            <text class="muted" x="345" y="302" text-anchor="middle" font-size="12">条数与每条长度</text>
+            <rect class="wait" x="20" y="344" width="420" height="58"></rect>
+            <text x="230" y="368" text-anchor="middle" font-size="13">预测模型远大于翻译模型：猜到的后文都翻译</text>
+            <text x="230" y="388" text-anchor="middle" font-size="13">翻译模型远大于预测模型：只翻译同意比例高的后文</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>动态调控</span><span>08 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">09</p>
+      <h2>计算上的改进</h2>
+      <p class="idea">代码中已经实现四种减少重复计算或拆开计算的做法。</p>
+      <table class="dense">
+        <thead>
+          <tr><th>方法</th><th>做法</th><th>目前结果</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>前缀 KV 复用</td>
+            <td>前面这段原文的编号与上一步完全一致时，复用已经算好的中间结果。B 条后文复制该结果，只计算后面新增的词。</td>
+            <td>小模型上已经复用前缀，预测总时间尚未下降。</td>
+          </tr>
+          <tr>
+            <td>相同翻译请求复用</td>
+            <td>同一句中，原文和已说出的译文完全相同的请求不重复翻译。重复出现的候选仍计入投票。</td>
+            <td>能直接复用的请求很少，没有形成可见加速。</td>
+          </tr>
+          <tr>
+            <td>预测与翻译分卡重叠</td>
+            <td>预测放在一张 GPU，翻译放在另一张，按原顺序取用结果，两个阶段叠在一起执行。</td>
+            <td>12 句开发集上，译文和开口位置不变，平均每句用时由 19.84 秒降至 15.05 秒。</td>
+          </tr>
+          <tr>
+            <td>显存不足时的处理</td>
+            <td>预测模型的输入词表放在 CPU，约 1 GB。长句改为一次只生成一条分支，四条分支仍然保留。</td>
+            <td>用于把 7B 预测模型跑完，不单独带来质量提升。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="footer"><span>计算</span><span>09 / 10</span></div>
+  </section>
+
+  <section class="slide">
+    <div class="slide-content">
+      <p class="kicker">10</p>
+      <h2>参考文献</h2>
+      <ul class="refs">
+        <li><span>01</span>Ouyang et al. Anticipating Future with Large Language Model for Simultaneous Machine Translation. arXiv:2410.22499, 2025.</li>
+        <li><span>02</span>Ma et al. STACL: Simultaneous Translation with Implicit Anticipation and Controllable Latency. ACL 2019.</li>
+        <li><span>03</span>Liu, Spanakis, and Niehues. Low-Latency Sequence-to-Sequence Speech Recognition and Translation by Partial Hypothesis Selection. arXiv:2005.11185, 2020.</li>
+        <li><span>04</span>Yu et al. SM2. 2024.</li>
+        <li><span>05</span>Papi et al. Over-Generation Cannot Be Rewarded: Length-Adaptive Average Lagging. 2022.</li>
+        <li><span>06</span>Ma et al. SimulEval: An Evaluation Toolkit for Simultaneous Translation. EMNLP 2020.</li>
+      </ul>
+    </div>
+    <div class="footer"><span>参考文献</span><span>10 / 10</span></div>
+  </section>
+
+  <nav class="pager" aria-label="翻页">
+    <button type="button" id="prev">上一页</button>
+    <span id="pager-label">01 / 10</span>
+    <button type="button" id="next">下一页</button>
+  </nav>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const progress = document.getElementById("progress");
+    const label = document.getElementById("pager-label");
+    const prev = document.getElementById("prev");
+    const next = document.getElementById("next");
+    let index = 0;
+
+    function go(nextIndex) {
+      const target = Math.max(0, Math.min(slides.length - 1, nextIndex));
+      if (target === index && slides[index].classList.contains("active")) {
+        paint();
+        return;
+      }
+      slides[index].classList.remove("active");
+      index = target;
+      slides[index].classList.add("active");
+      paint();
+    }
+
+    function paint() {
+      const page = String(index + 1).padStart(2, "0");
+      label.textContent = page + " / " + String(slides.length).padStart(2, "0");
+      progress.style.width = (index / (slides.length - 1)) * 100 + "%";
+      prev.disabled = index === 0;
+      next.disabled = index === slides.length - 1;
+    }
+
+    prev.addEventListener("click", () => go(index - 1));
+    next.addEventListener("click", () => go(index + 1));
+    document.addEventListener("keydown", (event) => {
+      const forward = ["ArrowDown", "ArrowRight", "PageDown", " "];
+      const back = ["ArrowUp", "ArrowLeft", "PageUp"];
+      if (forward.includes(event.key)) { event.preventDefault(); go(index + 1); }
+      else if (back.includes(event.key)) { event.preventDefault(); go(index - 1); }
+      else if (event.key === "Home") { event.preventDefault(); go(0); }
+      else if (event.key === "End") { event.preventDefault(); go(slides.length - 1); }
+    });
+    window.__go = go;
+    paint();
+  </script>
+</body>
+</html>

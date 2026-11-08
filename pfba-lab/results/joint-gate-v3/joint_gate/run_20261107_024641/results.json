@@ -1,0 +1,543 @@
+{
+  "config": {
+    "seed": 13,
+    "min_start": 3,
+    "arrival_gap": 0.3,
+    "ralcp_threshold": 0.6,
+    "incorrect_penalty": 1.0,
+    "cost_weight": 0.6,
+    "tune_fraction": 0.2,
+    "max_states_per_sentence": 4,
+    "max_states": 0,
+    "entropy_features": true,
+    "neural": true,
+    "device": "cuda"
+  },
+  "action_grid": [
+    "b2h2",
+    "b2h6",
+    "b4h2",
+    "b4h6"
+  ],
+  "baselines": {
+    "fixed_4_6": "b4h6",
+    "fixed_2_6": "b2h6",
+    "b_only": [
+      "b2h6",
+      "b4h6"
+    ],
+    "h_only": [
+      "b4h2",
+      "b4h6"
+    ]
+  },
+  "splits": {
+    "train_sentences": [
+      "dev:0000",
+      "dev:0001",
+      "dev:0002",
+      "dev:0004",
+      "dev:0005",
+      "dev:0006",
+      "dev:0007",
+      "dev:0009",
+      "dev:0010",
+      "dev:0011",
+      "dev:0012",
+      "dev:0013",
+      "dev:0015",
+      "dev:0016",
+      "dev:0018",
+      "dev:0019",
+      "dev:0021",
+      "dev:0022",
+      "dev:0023",
+      "dev:0024",
+      "dev:0025",
+      "dev:0026",
+      "dev:0028",
+      "dev:0029",
+      "dev:0030",
+      "dev:0031",
+      "dev:0032",
+      "dev:0034",
+      "dev:0035",
+      "dev:0036",
+      "dev:0037",
+      "dev:0038",
+      "dev:0039",
+      "dev:0040",
+      "dev:0041",
+      "dev:0042",
+      "dev:0046",
+      "dev:0047",
+      "dev:0048",
+      "dev:0050",
+      "dev:0051",
+      "dev:0052",
+      "dev:0053",
+      "dev:0054",
+      "dev:0055",
+      "dev:0056",
+      "dev:0058",
+      "dev:0059",
+      "dev:0060",
+      "dev:0061",
+      "dev:0062",
+      "dev:0063",
+      "dev:0064",
+      "dev:0065",
+      "dev:0066",
+      "dev:0068",
+      "dev:0069",
+      "dev:0070"
+    ],
+    "tune_sentences": [
+      "dev:0003",
+      "dev:0008",
+      "dev:0014",
+      "dev:0017",
+      "dev:0020",
+      "dev:0027",
+      "dev:0033",
+      "dev:0043",
+      "dev:0044",
+      "dev:0045",
+      "dev:0049",
+      "dev:0057",
+      "dev:0067",
+      "dev:0071"
+    ],
+    "test_sentences": [
+      "test:0000",
+      "test:0001",
+      "test:0002",
+      "test:0003",
+      "test:0004",
+      "test:0005",
+      "test:0006",
+      "test:0007",
+      "test:0008",
+      "test:0009",
+      "test:0010",
+      "test:0011"
+    ]
+  },
+  "label_counts": {
+    "train": 900,
+    "tune": 216,
+    "test": 192,
+    "states_train": 225,
+    "states_tune": 54,
+    "states_test": 48
+  },
+  "thresholds": {
+    "joint": 0.21687331753730096,
+    "b_only": 0.15402264371502256,
+    "h_only": 0.023622150240833972,
+    "joint_neural": 0.16289177184807344
+  },
+  "offline": {
+    "joint": {
+      "n_states": 48,
+      "compute_rate": 0.9583333333333334,
+      "mean_reward": 0.5267518310583617,
+      "mean_matched": 1.375,
+      "mean_incorrect": 0.7291666666666666,
+      "mean_cost_s": 0.19846917045828624,
+      "success_rate": 0.5,
+      "brier_score": 0.24595819526971918,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 11,
+        "b2h6": 13,
+        "b4h2": 3,
+        "b4h6": 19,
+        "read": 2
+      },
+      "threshold": 0.21687331753730096
+    },
+    "b_only": {
+      "n_states": 48,
+      "compute_rate": 0.9583333333333334,
+      "mean_reward": 0.5654407060583501,
+      "mean_matched": 1.375,
+      "mean_incorrect": 0.6666666666666666,
+      "mean_cost_s": 0.238154378791639,
+      "success_rate": 0.5,
+      "brier_score": 0.24503199220024072,
+      "brier_rows": 96,
+      "action_histogram": {
+        "b2h6": 16,
+        "b4h6": 30,
+        "read": 2
+      },
+      "threshold": 0.15402264371502256
+    },
+    "h_only": {
+      "n_states": 48,
+      "compute_rate": 0.9166666666666666,
+      "mean_reward": 0.46935485533332927,
+      "mean_matched": 1.0833333333333333,
+      "mean_incorrect": 0.5,
+      "mean_cost_s": 0.189964130000007,
+      "success_rate": 0.5227272727272727,
+      "brier_score": 0.2401276259538143,
+      "brier_rows": 96,
+      "action_histogram": {
+        "b4h2": 13,
+        "b4h6": 31,
+        "read": 4
+      },
+      "threshold": 0.023622150240833972
+    },
+    "joint_neural": {
+      "n_states": 48,
+      "compute_rate": 0.9583333333333334,
+      "mean_reward": 0.5876503045833735,
+      "mean_matched": 1.3333333333333333,
+      "mean_incorrect": 0.625,
+      "mean_cost_s": 0.20113838124993322,
+      "success_rate": 0.4782608695652174,
+      "brier_score": 0.24794075924567668,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 13,
+        "b2h6": 13,
+        "b4h6": 20,
+        "read": 2
+      },
+      "threshold": 0.16289177184807344
+    }
+  },
+  "rollouts": {
+    "fixed_4_6": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 22.647417687342855,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.822944367925326,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8179768323898315,
+          0.904744029045105,
+          0.9118427634239197,
+          0.8874475955963135,
+          0.7595133185386658,
+          0.8313193917274475,
+          0.6791390776634216,
+          0.7213037014007568,
+          0.7846791744232178,
+          0.8651050925254822,
+          0.8511176705360413
+        ]
+      },
+      "laal": 2.200812054421321,
+      "completion_s": {
+        "mean": 5.522698524416664,
+        "p95": 9.038907868000024
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.522698524416664,
+        "p95": 9.038907868000024
+      },
+      "inference_s": {
+        "mean": 4.155229454333171,
+        "total": 49.86275345199806
+      },
+      "feature_s": 0.0,
+      "predict_s": 36.089149822000536,
+      "translate_s": 13.765347414999269,
+      "action_histogram": {
+        "b4h6": 195,
+        "eos": 12
+      },
+      "policy": "fixed_4_6"
+    },
+    "fixed_2_6": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 16.48444458220903,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8288588474194208,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8869844079017639,
+          0.8875187635421753,
+          0.8760613203048706,
+          0.8758943676948547,
+          0.8278871178627014,
+          0.7920567393302917,
+          0.8237096667289734,
+          0.7612521052360535,
+          0.7417282462120056,
+          0.7667643427848816,
+          0.8667283058166504,
+          0.8397207856178284
+        ]
+      },
+      "laal": 2.202151115591778,
+      "completion_s": {
+        "mean": 5.506802682333379,
+        "p95": 9.03964982299999
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.506802682333379,
+        "p95": 9.03964982299999
+      },
+      "inference_s": {
+        "mean": 3.959993608333434,
+        "total": 47.51992330000121
+      },
+      "feature_s": 0.0,
+      "predict_s": 35.735088171999905,
+      "translate_s": 11.776931677000903,
+      "action_histogram": {
+        "b2h6": 195,
+        "eos": 12
+      },
+      "policy": "fixed_2_6"
+    },
+    "joint": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 17.285625053458816,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7917509526014328,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8133732676506042,
+          0.8760613203048706,
+          0.8987881541252136,
+          0.8561769723892212,
+          0.7595133185386658,
+          0.810966432094574,
+          0.6833756566047668,
+          0.7351964116096497,
+          0.7429941892623901,
+          0.8609949946403503,
+          0.6024269461631775
+        ]
+      },
+      "laal": 1.9747422024087555,
+      "completion_s": {
+        "mean": 5.53336931124998,
+        "p95": 9.064008858999932
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.53336931124998,
+        "p95": 9.064008858999932
+      },
+      "inference_s": {
+        "mean": 4.134994263583432,
+        "total": 49.61993116300118
+      },
+      "feature_s": 8.989686775001246,
+      "predict_s": 29.321377633999873,
+      "translate_s": 11.301502732001154,
+      "action_histogram": {
+        "b2h2": 32,
+        "b2h6": 70,
+        "b4h2": 24,
+        "b4h6": 65,
+        "eos": 12,
+        "read": 4
+      },
+      "policy": "joint",
+      "threshold": 0.21687331753730096
+    },
+    "b_only": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 19.271993775063294,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8262973874807358,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8353613615036011,
+          0.8603740930557251,
+          0.9118427634239197,
+          0.8829009532928467,
+          0.7595133185386658,
+          0.8242310285568237,
+          0.7612521052360535,
+          0.7351964116096497,
+          0.7429941892623901,
+          0.8609949946403503,
+          0.879763662815094
+        ]
+      },
+      "laal": 2.0888760457791746,
+      "completion_s": {
+        "mean": 5.531320880749994,
+        "p95": 9.039298227000018
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.531320880749994,
+        "p95": 9.039298227000018
+      },
+      "inference_s": {
+        "mean": 4.663801768500055,
+        "total": 55.965621222000664
+      },
+      "feature_s": 7.536377264998009,
+      "predict_s": 35.973196045999885,
+      "translate_s": 12.448609380001244,
+      "action_histogram": {
+        "b2h6": 89,
+        "b4h6": 104,
+        "eos": 12,
+        "read": 2
+      },
+      "policy": "b_only",
+      "threshold": 0.15402264371502256
+    },
+    "h_only": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 23.103136331348487,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8223961194356283,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437678337097,
+          0.8133732676506042,
+          0.904744029045105,
+          0.9118427634239197,
+          0.8683876991271973,
+          0.7595133185386658,
+          0.8108755946159363,
+          0.752668023109436,
+          0.7580628991127014,
+          0.7119193077087402,
+          0.8651050925254822,
+          0.8511176705360413
+        ]
+      },
+      "laal": 1.8314098527425733,
+      "completion_s": {
+        "mean": 5.524961559000109,
+        "p95": 9.054769168999883
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.524961559000109,
+        "p95": 9.054769168999883
+      },
+      "inference_s": {
+        "mean": 3.6090458354167745,
+        "total": 43.308550025001296
+      },
+      "feature_s": 7.5260531199990055,
+      "predict_s": 25.37400387500088,
+      "translate_s": 10.401877313000568,
+      "action_histogram": {
+        "b4h2": 55,
+        "b4h6": 115,
+        "eos": 12,
+        "read": 25
+      },
+      "policy": "h_only",
+      "threshold": 0.023622150240833972
+    },
+    "joint_neural": {
+      "n": 12,
+      "metrics": [
+        "bleu",
+        "comet"
+      ],
+      "bleu": {
+        "status": "ok",
+        "score": 17.086841615476114,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.791302889585495,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8611437082290649,
+          0.7974055409431458,
+          0.8619667887687683,
+          0.8967490196228027,
+          0.8829008936882019,
+          0.7595133781433105,
+          0.810966432094574,
+          0.6833756566047668,
+          0.7351964116096497,
+          0.7429945468902588,
+          0.860995352268219,
+          0.6024269461631775
+        ]
+      },
+      "laal": 1.9209740046561183,
+      "completion_s": {
+        "mean": 5.5242131119999796,
+        "p95": 9.044796243000246
+      },
+      "virtual_replay_completion_s": {
+        "mean": 5.5242131119999796,
+        "p95": 9.044796243000246
+      },
+      "inference_s": {
+        "mean": 4.1902894875833185,
+        "total": 50.283473850999826
+      },
+      "feature_s": 9.050506697004494,
+      "predict_s": 29.895906827998715,
+      "translate_s": 11.329606772998204,
+      "action_histogram": {
+        "b2h2": 38,
+        "b2h6": 72,
+        "b4h2": 11,
+        "b4h6": 70,
+        "eos": 12,
+        "read": 4
+      },
+      "policy": "joint_neural",
+      "threshold": 0.16289177184807344
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B",
+  "layout": "identical-valued untied input table",
+  "prompt_count": 11,
+  "all_candidates_match": true,
+  "weight_bytes": 272269312,
+  "weight_dtype": "torch.float16",
+  "weight_device": "cpu",
+  "execution_device": "cuda:0"
+}

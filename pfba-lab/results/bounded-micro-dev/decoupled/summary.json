@@ -1,0 +1,143 @@
+{
+  "metadata": {
+    "config": {
+      "branches": 4,
+      "horizon": 6,
+      "min_start": 3,
+      "arrival_gap": 0.3,
+      "threshold": 0.6,
+      "seed": 13,
+      "ready_limit": 1,
+      "anchor_policy": "vote",
+      "anchor_threshold": null,
+      "bounded_threshold": 0.6,
+      "bounded_initial_steps": 2,
+      "bounded_initial_words": 1
+    },
+    "split": "dev",
+    "offset": 0,
+    "limit": 12,
+    "predictor": "Qwen/Qwen2.5-7B",
+    "translator": "Unbabel/TowerInstruct-7B-v0.2",
+    "predictor_device": "cuda:0",
+    "translator_device": "cuda:1",
+    "modes": [
+      "taf",
+      "bounded-1"
+    ],
+    "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+    "clock": "monotonic wall-clock, paced text replay",
+    "prediction_batch_size": 1,
+    "predictor_dtype": "torch.float16",
+    "translator_dtype": "torch.float16",
+    "predictor_revision": "d149729398750b98c0af14eb82c78cfe92750796",
+    "translator_revision": "a240dfd3a0990c859ecfd4671e0ba9b923c04a43",
+    "torch": "2.11.0+cu130",
+    "gpu_names": [
+      "Tesla T4",
+      "Tesla T4"
+    ],
+    "code_sha256": {
+      "run_decoupled.py": "cceaebf55c6987afaac72243118df6f4d28b968ef6aaa0257a4586c7712f07ae",
+      "pipeline.py": "63ebe940973610f1d30e0df1db303e7b146bd11e8cbeeb3d71796b0e58f4393a",
+      "checkpoint.py": "f745898db6305cc368fb633cbce475234287e7bcbca9b571d4b86d16b98d7faa",
+      "run_pfba.py": "d8461eaa466882dbaccbcd7423f39016d7eb800b29427b4bbb11b29ad8d855c3"
+    }
+  },
+  "cells": [
+    {
+      "mode": "taf",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 23.433994711578542,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8117834279934565,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8867032527923584,
+          0.7223427295684814,
+          0.6369900703430176,
+          0.8267585039138794,
+          0.8511211276054382,
+          0.7759048342704773,
+          0.8258799910545349,
+          0.8395751714706421,
+          0.8475421667098999,
+          0.8456782102584839,
+          0.8111304044723511,
+          0.8717746734619141
+        ]
+      },
+      "laal": 2.4499269492690545,
+      "mean_first_output_s": 3.437335634083363,
+      "mean_completion_s": 32.362801733833344,
+      "p95_completion_s": 66.93024624600002,
+      "mean_drain_s": 32.362801733833344,
+      "actual_replay_s": 388.35640530600006,
+      "prediction_service_s": 232.50080562200014,
+      "translation_service_s": 148.6389963820002,
+      "overlap_s": 0.0,
+      "prediction_calls": 138,
+      "translation_calls": 150,
+      "translation_requests": 564,
+      "peak_ready": 0,
+      "discarded_predictions": 0,
+      "skipped_source_positions": 0,
+      "max_skipped_between_translations": 0,
+      "same_hypothesis_and_content_delays": 12,
+      "paired_candidate_steps": 138,
+      "matching_candidate_steps": 138
+    },
+    {
+      "mode": "bounded-1",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 23.676427330120543,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8143083900213242,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8867032527923584,
+          0.7664099335670471,
+          0.6369900703430176,
+          0.8267585039138794,
+          0.8379836082458496,
+          0.7759048342704773,
+          0.8258799910545349,
+          0.8281280994415283,
+          0.8475421667098999,
+          0.8456782102584839,
+          0.8111304044723511,
+          0.8825916051864624
+        ]
+      },
+      "laal": 2.7721831576862535,
+      "mean_first_output_s": 3.3955981719999975,
+      "mean_completion_s": 16.098581440333316,
+      "p95_completion_s": 25.504296827000076,
+      "mean_drain_s": 16.098581440333316,
+      "actual_replay_s": 193.19056245700028,
+      "prediction_service_s": 154.60730743100055,
+      "translation_service_s": 110.15971047300013,
+      "overlap_s": 78.79953921600077,
+      "prediction_calls": 89,
+      "translation_calls": 101,
+      "translation_requests": 368,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "skipped_source_positions": 49,
+      "max_skipped_between_translations": 1,
+      "same_hypothesis_and_content_delays": 2,
+      "paired_candidate_steps": 89,
+      "matching_candidate_steps": 89
+    }
+  ]
+}

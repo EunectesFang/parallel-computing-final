@@ -1,0 +1,36 @@
+{
+  "n": 64,
+  "repeats": 2000,
+  "seed": 13,
+  "delta_candidate_minus_baseline": {
+    "bleu": 4.37270973496317,
+    "comet": 0.013353354297578335,
+    "laal": 0.8568023635380967,
+    "completion_s": -39.8236077147187
+  },
+  "paired_95_percent_intervals": {
+    "bleu": [
+      2.231735389955535,
+      6.658840452164348
+    ],
+    "comet": [
+      0.0049430979415774345,
+      0.02292723674327135
+    ],
+    "laal": [
+      0.5747027606257274,
+      1.17471465194561
+    ],
+    "completion_s": [
+      -47.3713134170312,
+      -33.11477377556237
+    ]
+  },
+  "laal_margin": 0.5,
+  "passes": {
+    "laal_equivalent": false,
+    "bleu_increase": true,
+    "comet_increase": true,
+    "completion_time_reduction": true
+  }
+}

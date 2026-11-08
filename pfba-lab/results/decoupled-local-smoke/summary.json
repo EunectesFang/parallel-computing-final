@@ -1,0 +1,154 @@
+{
+  "metadata": {
+    "config": {
+      "branches": 4,
+      "horizon": 6,
+      "min_start": 3,
+      "arrival_gap": 0.03,
+      "threshold": 0.6,
+      "seed": 13,
+      "ready_limit": 1,
+      "anchor_policy": "vote",
+      "anchor_threshold": null
+    },
+    "split": "dev",
+    "offset": 0,
+    "limit": 1,
+    "predictor": "Qwen/Qwen2.5-0.5B",
+    "translator": "Helsinki-NLP/opus-mt-de-en",
+    "predictor_device": "cuda:0",
+    "translator_device": "cuda:0",
+    "modes": [
+      "taf",
+      "overlap-fifo",
+      "overlap-latest",
+      "overlap-fifo-anchor"
+    ],
+    "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+    "clock": "monotonic wall-clock, paced text replay",
+    "predictor_dtype": "torch.bfloat16",
+    "translator_dtype": "torch.bfloat16",
+    "torch": "2.6.0+cu124",
+    "gpu_names": [
+      "NVIDIA GeForce RTX 4070 Laptop GPU"
+    ]
+  },
+  "cells": [
+    {
+      "mode": "taf",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.48784250000608154,
+      "mean_completion_s": 1.3133407000059378,
+      "p95_completion_s": 1.3133407000059378,
+      "mean_drain_s": 1.3133407000059378,
+      "actual_replay_s": 1.3134881000005407,
+      "prediction_service_s": 0.8892861000058474,
+      "translation_service_s": 0.3633264000091003,
+      "overlap_s": 0.0,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 13,
+      "peak_ready": 0,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    },
+    {
+      "mode": "overlap-fifo",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.5511400999967009,
+      "mean_completion_s": 1.2522880999968038,
+      "p95_completion_s": 1.2522880999968038,
+      "mean_drain_s": 1.2522880999968038,
+      "actual_replay_s": 1.2525696000011521,
+      "prediction_service_s": 1.0650084000008064,
+      "translation_service_s": 0.404986799992912,
+      "overlap_s": 0.29151460000139195,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 13,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    },
+    {
+      "mode": "overlap-latest",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 30.739407647563215,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 6.0,
+      "mean_first_output_s": 0.28775369999493705,
+      "mean_completion_s": 0.28775369999493705,
+      "p95_completion_s": 0.28775369999493705,
+      "mean_drain_s": 0.42573609999817563,
+      "actual_replay_s": 0.42602509999414906,
+      "prediction_service_s": 0.35208670000429265,
+      "translation_service_s": 0.13731669999833684,
+      "overlap_s": 0.13731669999833684,
+      "prediction_calls": 1,
+      "translation_calls": 1,
+      "translation_requests": 1,
+      "peak_ready": 0,
+      "discarded_predictions": 1,
+      "same_hypothesis_and_content_delays": 0,
+      "paired_candidate_steps": 0,
+      "matching_candidate_steps": 0
+    },
+    {
+      "mode": "overlap-fifo-anchor",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.5478411000003689,
+      "mean_completion_s": 1.2093301999993855,
+      "p95_completion_s": 1.2093301999993855,
+      "mean_drain_s": 1.2093301999993855,
+      "actual_replay_s": 1.209670999996888,
+      "prediction_service_s": 1.0366833000007318,
+      "translation_service_s": 0.41634059999341844,
+      "overlap_s": 0.3074724000034621,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 16,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    }
+  ]
+}

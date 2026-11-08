@@ -1,0 +1,113 @@
+{
+  "paper": {
+    "title": "Anticipating Future with Large Language Model for Simultaneous Machine Translation",
+    "venue": "NAACL 2025 long",
+    "anthology": "2025.naacl-long.286",
+    "pages": "5547-5557",
+    "arxiv": "2410.22499v2",
+    "official_code": "https://github.com/owaski/TAF (local checkout ../taf-upstream @ 99e373a)",
+    "author_checkout": {
+      "path": "../taf-upstream",
+      "commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+      "files_read": [
+        "agents/ralcp_taf.py",
+        "agents/ralcp.py",
+        "agents/base.py",
+        "agents/utils.py"
+      ],
+      "data": [
+        "../taf-upstream/data/de_en/dev.de",
+        "../taf-upstream/data/de_en/dev.en"
+      ]
+    }
+  },
+  "implementation": "independent reimplementation; author checkout inspected",
+  "config": {
+    "policy": "ralcp_taf",
+    "n": 4,
+    "horizon": 6,
+    "top_k": 10,
+    "tau": 0.6,
+    "beam_width": 4,
+    "ralcp_fraction": 0.6,
+    "ralcp_content": false,
+    "min_start": 1,
+    "wait_k": 3,
+    "wait_stride": 1,
+    "max_new_tokens": 64,
+    "initial_read": 3,
+    "max_steps": 100000,
+    "seed": 13,
+    "src_unit": "word",
+    "tgt_unit": "word",
+    "cuda_sync": true,
+    "effective_beam_width": 1,
+    "candidate_budget": 4
+  },
+  "models": {
+    "llm": "Qwen/Qwen2.5-0.5B",
+    "mt": "Helsinki-NLP/opus-mt-de-en",
+    "comet": "Unbabel/wmt22-comet-da"
+  },
+  "classification": {
+    "llm": "substitution",
+    "mt": "substitution",
+    "comet": "substitution"
+  },
+  "data": "/tmp/taf/data/dev.tsv",
+  "argv": [
+    "/tmp/taf/scripts/reproduce_de_en.py",
+    "--data",
+    "/tmp/taf/data/dev.tsv",
+    "--policy",
+    "ralcp_taf",
+    "--beam-width",
+    "4",
+    "--ralcp-fraction",
+    "0.6",
+    "--n",
+    "4",
+    "--horizon",
+    "6",
+    "--initial-read",
+    "3",
+    "--device",
+    "cuda",
+    "--dtype",
+    "float16",
+    "--llm-backend",
+    "hf",
+    "--llm-model",
+    "Qwen/Qwen2.5-0.5B",
+    "--mt-backend",
+    "hf",
+    "--mt-model",
+    "Helsinki-NLP/opus-mt-de-en",
+    "--comet-model",
+    "Unbabel/wmt22-comet-da",
+    "--output-dir",
+    "/kaggle/working/taf_smoke"
+  ],
+  "environment": {
+    "python": "3.13.16 (main, Oct  1 2026, 15:40:24) [GCC 13.3.0]",
+    "platform": "Linux-6.18.55+-x86_64-with-glibc2.39",
+    "packages": {
+      "torch": "2.11.0+cu130",
+      "transformers": "4.57.6",
+      "sentencepiece": "0.2.2",
+      "datasets": "4.8.5",
+      "sacrebleu": "2.5.1",
+      "unbabel-comet": "2.2.7"
+    }
+  },
+  "notes": [
+    "Scores are valid only for the recorded backends; they are not paper reproduction numbers unless all exact artifacts are used.",
+    "COMET is null when unavailable; it is never fabricated.",
+    "Metric implementations: sacrebleu when available, otherwise internal 13a/exp BLEU; LAAL follows SimulEval (max(reference, prediction) length, source-completion cutoff, no per-token clamp)."
+  ],
+  "run": {
+    "timestamp_utc": "20261106T180723Z",
+    "output_dir": "/kaggle/working/taf_smoke",
+    "implementation_version": "0.1.0"
+  }
+}

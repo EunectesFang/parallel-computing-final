@@ -1,0 +1,124 @@
+{
+  "metadata": {
+    "config": {
+      "branches": 4,
+      "horizon": 6,
+      "min_start": 3,
+      "arrival_gap": 0.1,
+      "threshold": 0.6,
+      "seed": 13,
+      "ready_limit": 1,
+      "anchor_policy": "vote",
+      "anchor_threshold": null
+    },
+    "split": "dev",
+    "offset": 0,
+    "limit": 1,
+    "predictor": "Qwen/Qwen2.5-0.5B",
+    "translator": "Helsinki-NLP/opus-mt-de-en",
+    "predictor_device": "cuda:0",
+    "translator_device": "cuda:0",
+    "modes": [
+      "taf",
+      "overlap-fifo",
+      "overlap-fifo-anchor"
+    ],
+    "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+    "clock": "monotonic wall-clock, paced text replay",
+    "predictor_dtype": "torch.bfloat16",
+    "translator_dtype": "torch.bfloat16",
+    "torch": "2.6.0+cu124",
+    "gpu_names": [
+      "NVIDIA GeForce RTX 4070 Laptop GPU"
+    ]
+  },
+  "cells": [
+    {
+      "mode": "taf",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.606655799994769,
+      "mean_completion_s": 1.4116780999975163,
+      "p95_completion_s": 1.4116780999975163,
+      "mean_drain_s": 1.4116780999975163,
+      "actual_replay_s": 1.4117994999978691,
+      "prediction_service_s": 0.8685587999934796,
+      "translation_service_s": 0.34225930000684457,
+      "overlap_s": 0.0,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 13,
+      "peak_ready": 0,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    },
+    {
+      "mode": "overlap-fifo",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.6694578000024194,
+      "mean_completion_s": 1.352377900002466,
+      "p95_completion_s": 1.352377900002466,
+      "mean_drain_s": 1.352377900002466,
+      "actual_replay_s": 1.3528724999996484,
+      "prediction_service_s": 1.0227927999949316,
+      "translation_service_s": 0.41429039999638917,
+      "overlap_s": 0.2954356999907759,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 13,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    },
+    {
+      "mode": "overlap-fifo-anchor",
+      "n": 1,
+      "bleu": {
+        "status": "ok",
+        "score": 22.957488466614326,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 1.8,
+      "mean_first_output_s": 0.6770469999974011,
+      "mean_completion_s": 1.384489099997154,
+      "p95_completion_s": 1.384489099997154,
+      "mean_drain_s": 1.384489099997154,
+      "actual_replay_s": 1.384722499999043,
+      "prediction_service_s": 1.06493670000782,
+      "translation_service_s": 0.40410919999703765,
+      "overlap_s": 0.28961400000116555,
+      "prediction_calls": 3,
+      "translation_calls": 4,
+      "translation_requests": 16,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "same_hypothesis_and_content_delays": 1,
+      "paired_candidate_steps": 3,
+      "matching_candidate_steps": 3
+    }
+  ]
+}

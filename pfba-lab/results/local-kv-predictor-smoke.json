@@ -1,0 +1,209 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B",
+  "hardware": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "prompts": 33,
+  "matched": 28,
+  "reused_tokens": 738,
+  "baseline_mean_s": 0.5970689333333928,
+  "kv_mean_s": 0.7008016636364394,
+  "records": [
+    {
+      "match": true,
+      "reused": 0,
+      "baseline_s": 0.5371420999999827,
+      "kv_s": 0.6233704000005673
+    },
+    {
+      "match": false,
+      "reused": 7,
+      "baseline_s": 0.5420525000008638,
+      "kv_s": 0.6383401999992202
+    },
+    {
+      "match": true,
+      "reused": 9,
+      "baseline_s": 0.5346362000000227,
+      "kv_s": 0.6873598000001948
+    },
+    {
+      "match": false,
+      "reused": 0,
+      "baseline_s": 0.5622366999996302,
+      "kv_s": 0.6453324000012799
+    },
+    {
+      "match": true,
+      "reused": 3,
+      "baseline_s": 0.5387952000000951,
+      "kv_s": 0.6282317000004696
+    },
+    {
+      "match": true,
+      "reused": 7,
+      "baseline_s": 0.5331817000005685,
+      "kv_s": 0.6211088000000018
+    },
+    {
+      "match": true,
+      "reused": 8,
+      "baseline_s": 0.5706046000013885,
+      "kv_s": 0.635349000000133
+    },
+    {
+      "match": true,
+      "reused": 12,
+      "baseline_s": 0.6160510000008799,
+      "kv_s": 0.7213860000010754
+    },
+    {
+      "match": true,
+      "reused": 15,
+      "baseline_s": 0.6427037000012206,
+      "kv_s": 0.7698500999995304
+    },
+    {
+      "match": true,
+      "reused": 16,
+      "baseline_s": 0.7357074999999895,
+      "kv_s": 0.7729871000010462
+    },
+    {
+      "match": true,
+      "reused": 18,
+      "baseline_s": 0.7522907000002306,
+      "kv_s": 0.9154302000006282
+    },
+    {
+      "match": true,
+      "reused": 19,
+      "baseline_s": 0.7156341999998403,
+      "kv_s": 0.9128846999992675
+    },
+    {
+      "match": true,
+      "reused": 20,
+      "baseline_s": 0.7418991999984428,
+      "kv_s": 0.8876508999983344
+    },
+    {
+      "match": true,
+      "reused": 22,
+      "baseline_s": 0.8385354000001826,
+      "kv_s": 0.924320500000249
+    },
+    {
+      "match": true,
+      "reused": 23,
+      "baseline_s": 0.8302733000000444,
+      "kv_s": 0.9054596000005404
+    },
+    {
+      "match": false,
+      "reused": 24,
+      "baseline_s": 0.6403110000010201,
+      "kv_s": 0.8724354000005405
+    },
+    {
+      "match": false,
+      "reused": 25,
+      "baseline_s": 0.5727310000002035,
+      "kv_s": 0.6427894999997079
+    },
+    {
+      "match": true,
+      "reused": 34,
+      "baseline_s": 0.5528816999994888,
+      "kv_s": 0.6381646999998338
+    },
+    {
+      "match": true,
+      "reused": 35,
+      "baseline_s": 0.538832000000184,
+      "kv_s": 0.6549261000000115
+    },
+    {
+      "match": true,
+      "reused": 39,
+      "baseline_s": 0.5458562999992864,
+      "kv_s": 0.6519239999997808
+    },
+    {
+      "match": true,
+      "reused": 40,
+      "baseline_s": 0.555583100000149,
+      "kv_s": 0.6608677000003809
+    },
+    {
+      "match": true,
+      "reused": 42,
+      "baseline_s": 0.5375540000004548,
+      "kv_s": 0.6478567000012845
+    },
+    {
+      "match": true,
+      "reused": 44,
+      "baseline_s": 0.5371697999999014,
+      "kv_s": 0.6528582000009919
+    },
+    {
+      "match": true,
+      "reused": 45,
+      "baseline_s": 0.5648149999997258,
+      "kv_s": 0.6434867999996641
+    },
+    {
+      "match": true,
+      "reused": 46,
+      "baseline_s": 0.5584498000007443,
+      "kv_s": 0.6334060999997746
+    },
+    {
+      "match": true,
+      "reused": 47,
+      "baseline_s": 0.5422658999996202,
+      "kv_s": 0.6422416000004887
+    },
+    {
+      "match": false,
+      "reused": 51,
+      "baseline_s": 0.5609707999992679,
+      "kv_s": 0.6327094999996916
+    },
+    {
+      "match": true,
+      "reused": 52,
+      "baseline_s": 0.5535438999995677,
+      "kv_s": 0.6341640999999072
+    },
+    {
+      "match": true,
+      "reused": 0,
+      "baseline_s": 0.5342163999994227,
+      "kv_s": 0.6475080000000162
+    },
+    {
+      "match": true,
+      "reused": 5,
+      "baseline_s": 0.5404968000002555,
+      "kv_s": 0.6603801000001113
+    },
+    {
+      "match": true,
+      "reused": 6,
+      "baseline_s": 0.5490608000000066,
+      "kv_s": 0.6340510999998514
+    },
+    {
+      "match": true,
+      "reused": 11,
+      "baseline_s": 0.5673009999991336,
+      "kv_s": 0.6386711999984982
+    },
+    {
+      "match": true,
+      "reused": 13,
+      "baseline_s": 0.5594915000001492,
+      "kv_s": 0.6489526999994268
+    }
+  ]
+}

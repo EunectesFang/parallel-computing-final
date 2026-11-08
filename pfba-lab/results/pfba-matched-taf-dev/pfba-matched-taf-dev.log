@@ -1,0 +1,70 @@
+[{"stream_name":"stderr","time":19.116549323,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":19.116595644,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":19.116600459,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":19.116603058,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":19.116605554,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stdout","time":20.207406696,"data":"run_pfba.py SHA-256: d8461eaa466882dbaccbcd7423f39016d7eb800b29427b4bbb11b29ad8d855c3\n"}
+,{"stream_name":"stdout","time":20.20750563,"data":"pipeline.py SHA-256: a607f5b3b971f4c7a12ed6a95f2608d0712ee51eb23ca5d76f1f1806e4448d76\n"}
+,{"stream_name":"stdout","time":20.207655775,"data":"checkpoint.py SHA-256: f745898db6305cc368fb633cbce475234287e7bcbca9b571d4b86d16b98d7faa\n"}
+,{"stream_name":"stdout","time":20.207807301,"data":"cpu_embedding.py SHA-256: 4deb457aae2401d15a5567f1041d2990f50f9f8a65f375d0cbff62cc6ef57b32\n"}
+,{"stream_name":"stdout","time":20.207879844,"data":"run_decoupled.py SHA-256: 5eb8fb4a6936d4bc224e933d52dc1ea6cb2cfabb55fb57718cd0808f67fa5294\n"}
+,{"stream_name":"stderr","time":38.762257693,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":54.179644879,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":54.179672962,"data":"I0000 00:00:1794029483.726074      51 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stderr","time":121.048142833,"data":"\rFetching 4 files:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rFetching 4 files:  25%|██▌       | 1/4 [01:02\u003c03:06, 62.19s/it]\rFetching 4 files: 100%|██████████| 4/4 [01:02\u003c00:00, 15.55s/it]\n"}
+,{"stream_name":"stderr","time":173.556638577,"data":"\rLoading checkpoint shards:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  25%|██▌       | 1/4 [00:04\u003c00:12,  4.14s/it]\rLoading checkpoint shards:  50%|█████     | 2/4 [00:14\u003c00:15,  7.61s/it]\rLoading checkpoint shards:  75%|███████▌  | 3/4 [00:29\u003c00:10, 10.98s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:43\u003c00:00, 12.26s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:43\u003c00:00, 10.85s/it]\n"}
+,{"stream_name":"stderr","time":285.942156475,"data":"\rFetching 6 files:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rFetching 6 files:  17%|█▋        | 1/6 [01:45\u003c08:49, 105.96s/it]\rFetching 6 files: 100%|██████████| 6/6 [01:46\u003c00:00, 17.67s/it] \n"}
+,{"stream_name":"stderr","time":405.859483512,"data":"\rLoading checkpoint shards:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  17%|█▋        | 1/6 [00:16\u003c01:21, 16.39s/it]\rLoading checkpoint shards:  33%|███▎      | 2/6 [00:35\u003c01:12, 18.15s/it]\rLoading checkpoint shards:  50%|█████     | 3/6 [00:55\u003c00:56, 18.70s/it]\rLoading checkpoint shards:  67%|██████▋   | 4/6 [01:14\u003c00:37, 18.96s/it]\rLoading checkpoint shards:  83%|████████▎ | 5/6 [01:33\u003c00:19, 19.10s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 16.24s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 17.42s/it]\n"}
+,{"stream_name":"stdout","time":471.109782675,"data":"[pipeline] 1/24 sentences\n"}
+,{"stream_name":"stdout","time":631.797295133,"data":"[pipeline] 2/24 sentences\n"}
+,{"stream_name":"stdout","time":681.326615734,"data":"[pipeline] 3/24 sentences\n"}
+,{"stream_name":"stdout","time":737.76189069,"data":"[pipeline] 4/24 sentences\n"}
+,{"stream_name":"stdout","time":793.860178295,"data":"[pipeline] 5/24 sentences\n"}
+,{"stream_name":"stdout","time":805.758939348,"data":"[pipeline] 6/24 sentences\n"}
+,{"stream_name":"stdout","time":829.59186554,"data":"[pipeline] 7/24 sentences\n"}
+,{"stream_name":"stdout","time":886.321054026,"data":"[pipeline] 8/24 sentences\n"}
+,{"stream_name":"stdout","time":921.622798411,"data":"[pipeline] 9/24 sentences\n"}
+,{"stream_name":"stdout","time":943.443415194,"data":"[pipeline] 10/24 sentences\n"}
+,{"stream_name":"stdout","time":1018.71400828,"data":"[pipeline] 11/24 sentences\n"}
+,{"stream_name":"stdout","time":1044.639203954,"data":"[pipeline] 12/24 sentences\n"}
+,{"stream_name":"stdout","time":1096.015818392,"data":"[pipeline] 13/24 sentences\n"}
+,{"stream_name":"stdout","time":1138.468857899,"data":"[pipeline] 14/24 sentences\n"}
+,{"stream_name":"stdout","time":1214.798836182,"data":"[pipeline] 15/24 sentences\n"}
+,{"stream_name":"stdout","time":1243.763692143,"data":"[pipeline] 16/24 sentences\n"}
+,{"stream_name":"stdout","time":1315.665145419,"data":"[pipeline] 17/24 sentences\n"}
+,{"stream_name":"stdout","time":1383.059366218,"data":"[pipeline] 18/24 sentences\n"}
+,{"stream_name":"stdout","time":1443.242828738,"data":"[pipeline] 19/24 sentences\n"}
+,{"stream_name":"stdout","time":1475.445418771,"data":"[pipeline] 20/24 sentences\n"}
+,{"stream_name":"stdout","time":1514.89986802,"data":"[pipeline] 21/24 sentences\n"}
+,{"stream_name":"stdout","time":1543.33165318,"data":"[pipeline] 22/24 sentences\n"}
+,{"stream_name":"stdout","time":1595.581346779,"data":"[pipeline] 23/24 sentences\n"}
+,{"stream_name":"stdout","time":1650.673143151,"data":"[pipeline] 24/24 sentences\n"}
+,{"stream_name":"stderr","time":1652.151213618,"data":"/usr/local/lib/python3.13/dist-packages/torchmetrics/utilities/imports.py:23: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools\u003c81.\n"}
+,{"stream_name":"stderr","time":1652.151245108,"data":"  from pkg_resources import DistributionNotFound, get_distribution\n"}
+,{"stream_name":"stderr","time":1661.608777089,"data":"\rFetching 5 files:   0%|          | 0/5 [00:00\u003c?, ?it/s]\rFetching 5 files:  20%|██        | 1/5 [00:00\u003c00:00,  6.54it/s]\rFetching 5 files:  80%|████████  | 4/5 [00:07\u003c00:01,  1.93s/it]\rFetching 5 files: 100%|██████████| 5/5 [00:07\u003c00:00,  1.44s/it]\n"}
+,{"stream_name":"stderr","time":1672.729373809,"data":"INFO:pytorch_lightning.utilities.migration.utils:Lightning automatically upgraded your loaded checkpoint from v1.8.3.post1 to v2.6.6. To apply the upgrade to your files permanently, run `python -m pytorch_lightning.utilities.upgrade_checkpoint ../../root/.cache/huggingface/hub/models--Unbabel--wmt22-comet-da/snapshots/2760a223ac957f30acfb18c8aa649b01cf1d75f2/checkpoints/model.ckpt`\n"}
+,{"stream_name":"stderr","time":1681.797597175,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/core/saving.py:216: Found keys that are not in the model state dict but in the checkpoint: ['encoder.model.embeddings.position_ids']\n"}
+,{"stream_name":"stderr","time":1682.026754158,"data":"INFO:pytorch_lightning.utilities.rank_zero:GPU available: True (cuda), used: False\n"}
+,{"stream_name":"stderr","time":1682.027401114,"data":"INFO:pytorch_lightning.utilities.rank_zero:TPU available: False, using: 0 TPU cores\n"}
+,{"stream_name":"stderr","time":1682.027412239,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/trainer/setup.py:175: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.\n"}
+,{"stream_name":"stderr","time":1682.02751147,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.\n"}
+,{"stream_name":"stderr","time":1682.029150362,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.\n"}
+,{"stream_name":"stderr","time":1682.0370968,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.\n"}
+,{"stream_name":"stderr","time":1692.767866511,"data":"\rPredicting: 0it [00:00, ?it/s]\rPredicting: 0it [00:00, ?it/s]\rPredicting DataLoader 0:   0%|          | 0/3 [00:00\u003c?, ?it/s]\rPredicting DataLoader 0:  33%|███▎      | 1/3 [00:02\u003c00:05,  2.62s/it]\rPredicting DataLoader 0:  67%|██████▋   | 2/3 [00:05\u003c00:02,  2.88s/it]\rPredicting DataLoader 0: 100%|██████████| 3/3 [00:10\u003c00:00,  3.57s/it]\rPredicting DataLoader 0: 100%|██████████| 3/3 [00:10\u003c00:00,  3.57s/it]\n"}
+,{"stream_name":"stderr","time":1693.783636557,"data":"INFO:pytorch_lightning.utilities.migration.utils:Lightning automatically upgraded your loaded checkpoint from v1.8.3.post1 to v2.6.6. To apply the upgrade to your files permanently, run `python -m pytorch_lightning.utilities.upgrade_checkpoint ../../root/.cache/huggingface/hub/models--Unbabel--wmt22-comet-da/snapshots/2760a223ac957f30acfb18c8aa649b01cf1d75f2/checkpoints/model.ckpt`\n"}
+,{"stream_name":"stderr","time":1702.269818237,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/core/saving.py:216: Found keys that are not in the model state dict but in the checkpoint: ['encoder.model.embeddings.position_ids']\n"}
+,{"stream_name":"stderr","time":1702.42196393,"data":"INFO:pytorch_lightning.utilities.rank_zero:GPU available: True (cuda), used: False\n"}
+,{"stream_name":"stderr","time":1702.422000523,"data":"INFO:pytorch_lightning.utilities.rank_zero:TPU available: False, using: 0 TPU cores\n"}
+,{"stream_name":"stderr","time":1702.422005961,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/trainer/setup.py:175: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.\n"}
+,{"stream_name":"stderr","time":1702.422078471,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.\n"}
+,{"stream_name":"stderr","time":1702.422593316,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.\n"}
+,{"stream_name":"stderr","time":1702.430183312,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.\n"}
+,{"stream_name":"stderr","time":1713.119407961,"data":"\rPredicting: 0it [00:00, ?it/s]\rPredicting: 0it [00:00, ?it/s]\rPredicting DataLoader 0:   0%|          | 0/3 [00:00\u003c?, ?it/s]\rPredicting DataLoader 0:  33%|███▎      | 1/3 [00:02\u003c00:05,  2.54s/it]\rPredicting DataLoader 0:  67%|██████▋   | 2/3 [00:05\u003c00:02,  2.88s/it]\rPredicting DataLoader 0: 100%|██████████| 3/3 [00:10\u003c00:00,  3.56s/it]\rPredicting DataLoader 0: 100%|██████████| 3/3 [00:10\u003c00:00,  3.56s/it]\n"}
+,{"stream_name":"stdout","time":1713.131455903,"data":"[pipeline] wrote /kaggle/working/decoupled/summary.json\n"}
+,{"stream_name":"stderr","time":1722.945854809,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":1722.945896802,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":1723.249196409,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":1723.249222318,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":1724.100940848,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":1724.846090194,"data":"[NbConvertApp] Writing 399378 bytes to __results__.html\n"}
+]

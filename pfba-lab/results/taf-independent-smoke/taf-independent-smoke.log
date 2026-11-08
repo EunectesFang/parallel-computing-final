@@ -1,0 +1,46 @@
+[{"stream_name":"stderr","time":26.821819585,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":26.821860311000002,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":26.821867138,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":26.821877944,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":26.821881171,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":59.087834391,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":82.080671717,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":82.080708362,"data":"I0000 00:00:1793988382.524869      50 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stderr","time":112.140673007,"data":"/usr/local/lib/python3.13/dist-packages/torchmetrics/utilities/imports.py:23: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools\u003c81.\n"}
+,{"stream_name":"stderr","time":112.140725727,"data":"  from pkg_resources import DistributionNotFound, get_distribution\n"}
+,{"stream_name":"stderr","time":121.009721201,"data":"\rFetching 5 files:   0%|          | 0/5 [00:00\u003c?, ?it/s]\rFetching 5 files:  40%|████      | 2/5 [00:00\u003c00:00, 14.27it/s]\rFetching 5 files:  80%|████████  | 4/5 [00:06\u003c00:01,  1.83s/it]\rFetching 5 files: 100%|██████████| 5/5 [00:06\u003c00:00,  1.25s/it]\n"}
+,{"stream_name":"stderr","time":132.486484407,"data":"INFO:pytorch_lightning.utilities.migration.utils:Lightning automatically upgraded your loaded checkpoint from v1.8.3.post1 to v2.6.6. To apply the upgrade to your files permanently, run `python -m pytorch_lightning.utilities.upgrade_checkpoint ../../root/.cache/huggingface/hub/models--Unbabel--wmt22-comet-da/snapshots/2760a223ac957f30acfb18c8aa649b01cf1d75f2/checkpoints/model.ckpt`\n"}
+,{"stream_name":"stderr","time":142.876446644,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/core/saving.py:216: Found keys that are not in the model state dict but in the checkpoint: ['encoder.model.embeddings.position_ids']\n"}
+,{"stream_name":"stderr","time":146.824167836,"data":"The following generation flags are not valid and may be ignored: ['early_stopping']. Set `TRANSFORMERS_VERBOSITY=info` for more details.\n"}
+,{"stream_name":"stdout","time":148.570833571,"data":"[1/8] Gutach: More security for pedestrians\n"}
+,{"stream_name":"stdout","time":159.19961361,"data":"[2/8] They are not 100 meters apart: On Tuesday it is in Gutach the new B 33 pedestrian lamp el at the village parking in oper\n"}
+,{"stream_name":"stdout","time":161.773469357,"data":"[3/8] Two plants so close together: intention or a strike of the shield? - Yes.\n"}
+,{"stream_name":"stdout","time":184.817050791,"data":"[8/8] We have the museum , two churches , spa park , the bus stop , a doctor and a bank as well as a traffic flow from the res\n"}
+,{"stream_name":"stderr","time":185.047029769,"data":"INFO:pytorch_lightning.utilities.rank_zero:GPU available: True (cuda), used: True\n"}
+,{"stream_name":"stderr","time":185.047299157,"data":"INFO:pytorch_lightning.utilities.rank_zero:TPU available: False, using: 0 TPU cores\n"}
+,{"stream_name":"stderr","time":185.047313613,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.\n"}
+,{"stream_name":"stderr","time":185.047751694,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.\n"}
+,{"stream_name":"stderr","time":185.04933819,"data":"INFO:pytorch_lightning.accelerators.cuda:LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]\n"}
+,{"stream_name":"stderr","time":185.695340661,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.\n"}
+,{"stream_name":"stderr","time":186.219799678,"data":"\rPredicting: 0it [00:00, ?it/s]\rPredicting: 0it [00:00, ?it/s]\rPredicting DataLoader 0:   0%|          | 0/1 [00:00\u003c?, ?it/s]\rPredicting DataLoader 0: 100%|██████████| 1/1 [00:00\u003c00:00,  2.79it/s]\rPredicting DataLoader 0: 100%|██████████| 1/1 [00:00\u003c00:00,  2.79it/s]\n"}
+,{"stream_name":"stdout","time":188.750844659,"data":"{\n"}
+,{"stream_name":"stdout","time":188.750873428,"data":"  \"output_dir\": \"/kaggle/working/taf_smoke\",\n"}
+,{"stream_name":"stdout","time":188.75087947,"data":"  \"n_sentences\": 8,\n"}
+,{"stream_name":"stdout","time":188.750884091,"data":"  \"bleu\": 22.957488466614326,\n"}
+,{"stream_name":"stdout","time":188.750888697,"data":"  \"comet\": 0.7236090451478958,\n"}
+,{"stream_name":"stdout","time":188.750893586,"data":"  \"comet_status\": \"ok\",\n"}
+,{"stream_name":"stdout","time":188.750898332,"data":"  \"laal\": 2.1605619566511036,\n"}
+,{"stream_name":"stdout","time":188.750920522,"data":"  \"avg_step_ms\": 415.064849,\n"}
+,{"stream_name":"stdout","time":188.750925151,"data":"  \"classification\": {\n"}
+,{"stream_name":"stdout","time":188.75092998,"data":"    \"llm\": \"substitution\",\n"}
+,{"stream_name":"stdout","time":188.750934642,"data":"    \"mt\": \"substitution\",\n"}
+,{"stream_name":"stdout","time":188.75093924,"data":"    \"comet\": \"substitution\"\n"}
+,{"stream_name":"stdout","time":188.750945038,"data":"  }\n"}
+,{"stream_name":"stdout","time":188.750949636,"data":"}\n"}
+,{"stream_name":"stderr","time":199.916291695,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":199.916317539,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":200.292819362,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":200.292846089,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":201.283041146,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":201.831029674,"data":"[NbConvertApp] Writing 317440 bytes to __results__.html\n"}
+]

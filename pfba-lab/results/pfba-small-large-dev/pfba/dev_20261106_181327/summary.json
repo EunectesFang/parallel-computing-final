@@ -1,0 +1,78 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 6,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "small",
+    "translator": "large",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "small",
+      "translator": "large",
+      "mode": "taf",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 24.840326118396987,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8104457159837087,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.4068051510659867,
+      "mean_completion_s": 72.79730895650012,
+      "predict_s": 46.693607671001246,
+      "translate_s": 819.6654177270009,
+      "inference_s": 866.3677074780014,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "small",
+      "translator": "large",
+      "mode": "pfba",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 24.840326118396987,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8104457159837087,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.4068051510659867,
+      "mean_completion_s": 73.06628631616648,
+      "predict_s": 46.58549236599811,
+      "translate_s": 823.0009859149998,
+      "inference_s": 869.5954357939979,
+      "reuse_hits": 3,
+      "reuse_misses": 561,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

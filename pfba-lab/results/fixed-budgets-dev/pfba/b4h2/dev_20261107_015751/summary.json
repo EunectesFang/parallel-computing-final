@@ -1,0 +1,58 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 2,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "small",
+    "translator": "small",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "taf",
+      "split": "dev",
+      "n": 24,
+      "bleu": {
+        "status": "ok",
+        "score": 18.419611665638538,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7345990786949793,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.1092017491448707,
+      "mean_completion_s": 4.695140660916669,
+      "p95_completion_s": 8.115881297000078,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:0",
+      "predictor_dtype": "torch.float16",
+      "translator_dtype": "torch.float16",
+      "predict_s": 22.13428131299827,
+      "translate_s": 14.917292308000015,
+      "inference_s": 37.06459370599862,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

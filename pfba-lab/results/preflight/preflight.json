@@ -1,0 +1,15 @@
+{
+  "gpu": [
+    "Tesla T4",
+    "Tesla T4"
+  ],
+  "future": "Heute ist das Wetter sehr schlim",
+  "translation": "Today the weather is very slim",
+  "preflight_comet": 0.7372170686721802,
+  "versions": {
+    "torch": "2.11.0+cu130",
+    "transformers": "4.57.6",
+    "sacrebleu": "2.5.1",
+    "unbabel-comet": "2.2.7"
+  }
+}

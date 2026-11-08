@@ -1,0 +1,10 @@
+# CPU invariant tests
+pytest>=7.0
+# Already present in the local py312 env; pinned loosely for Kaggle.
+torch>=2.1
+transformers>=4.40
+sentencepiece>=0.1.99
+# Optional, used when available (Kaggle installs these):
+# sacrebleu>=2.4
+# unbabel-comet>=2.2
+# simuleval>=1.1  (not used for scoring; metrics are reimplemented)

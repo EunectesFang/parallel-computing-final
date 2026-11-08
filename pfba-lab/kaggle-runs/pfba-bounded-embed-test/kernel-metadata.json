@@ -1,0 +1,13 @@
+{
+  "id": "eunectesqaq/pfba-bounded-embed-test",
+  "title": "pfba bounded embed test",
+  "code_file": "kaggle_entry.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

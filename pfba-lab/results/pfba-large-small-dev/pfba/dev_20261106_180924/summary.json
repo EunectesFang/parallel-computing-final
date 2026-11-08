@@ -1,0 +1,78 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 6,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "large",
+    "translator": "small",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "large",
+      "translator": "small",
+      "mode": "taf",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 18.352058669648727,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.755995104710261,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.379815369241459,
+      "mean_completion_s": 29.980539427416712,
+      "predict_s": 336.3371507069999,
+      "translate_s": 16.221724203000747,
+      "inference_s": 352.56647312900054,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "large",
+      "translator": "small",
+      "mode": "pfba",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 18.352058669648727,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.755995104710261,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.379815369241459,
+      "mean_completion_s": 30.106731125333507,
+      "predict_s": 337.836837307001,
+      "translate_s": 16.236501251000732,
+      "inference_s": 354.0807735040021,
+      "reuse_hits": 9,
+      "reuse_misses": 555,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

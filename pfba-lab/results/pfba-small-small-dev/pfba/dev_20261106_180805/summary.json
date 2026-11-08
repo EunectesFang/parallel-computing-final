@@ -1,0 +1,78 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 6,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "small",
+    "translator": "small",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "taf",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 17.894554448071837,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7576559285322825,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.5652780618211075,
+      "mean_completion_s": 4.2043096365000165,
+      "predict_s": 29.28832773000039,
+      "translate_s": 13.501843307999593,
+      "inference_s": 42.79640210499991,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "pfba",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 17.894554448071837,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7576559285322825,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.5652780618211075,
+      "mean_completion_s": 4.229009436916663,
+      "predict_s": 29.64483950299973,
+      "translate_s": 13.599789491000479,
+      "inference_s": 43.2512818550004,
+      "reuse_hits": 3,
+      "reuse_misses": 561,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

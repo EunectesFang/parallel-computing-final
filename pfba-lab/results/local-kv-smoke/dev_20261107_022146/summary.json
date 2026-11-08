@@ -1,0 +1,112 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 6,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "small",
+    "translator": "small",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "taf",
+      "split": "dev",
+      "n": 3,
+      "bleu": {
+        "status": "ok",
+        "score": 13.80358212874601,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 2.910712520084044,
+      "mean_completion_s": 11.052310966667333,
+      "p95_completion_s": 23.898294799997167,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:0",
+      "predictor_dtype": "torch.bfloat16",
+      "translator_dtype": "torch.bfloat16",
+      "predict_s": 23.636074599993663,
+      "translate_s": 7.7165812000075675,
+      "inference_s": 31.356932900001993,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "pfba",
+      "split": "dev",
+      "n": 3,
+      "bleu": {
+        "status": "ok",
+        "score": 13.80358212874601,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 2.910712520084044,
+      "mean_completion_s": 11.309088233332297,
+      "p95_completion_s": 25.21449840000205,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:0",
+      "predictor_dtype": "torch.bfloat16",
+      "translator_dtype": "torch.bfloat16",
+      "predict_s": 24.267667099999017,
+      "translate_s": 7.856320400000186,
+      "inference_s": 32.127264699996886,
+      "reuse_hits": 1,
+      "reuse_misses": 134,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "small",
+      "translator": "small",
+      "mode": "pfba-kv",
+      "split": "dev",
+      "n": 3,
+      "bleu": {
+        "status": "ok",
+        "score": 13.800069448265413,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "skipped"
+      },
+      "laal": 3.0180555555555557,
+      "mean_completion_s": 11.37347283333135,
+      "p95_completion_s": 25.161967099993127,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:0",
+      "predictor_dtype": "torch.bfloat16",
+      "translator_dtype": "torch.bfloat16",
+      "predict_s": 25.534002000000328,
+      "translate_s": 6.783008399997925,
+      "inference_s": 32.32041849999405,
+      "reuse_hits": 2,
+      "reuse_misses": 133,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

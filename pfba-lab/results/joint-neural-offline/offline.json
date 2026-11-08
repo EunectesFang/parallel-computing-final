@@ -1,0 +1,57 @@
+{
+  "train_rows": 304,
+  "tune_rows": 80,
+  "pilot_test_rows": 192,
+  "policies": {
+    "joint_logistic": {
+      "n_states": 48,
+      "compute_rate": 0.9791666666666666,
+      "mean_reward": 0.8250394930874902,
+      "mean_matched": 1.4583333333333333,
+      "mean_incorrect": 0.5208333333333334,
+      "mean_cost_s": 0.18743417818751595,
+      "success_rate": 0.5106382978723404,
+      "brier_score": 0.2576776786844881,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 19,
+        "b2h6": 10,
+        "b4h2": 3,
+        "b4h6": 15,
+        "read": 1
+      },
+      "threshold": -0.8066030327398253,
+      "models": {
+        "b2h2": "LogisticRegression",
+        "b2h6": "LogisticRegression",
+        "b4h2": "LogisticRegression",
+        "b4h6": "LogisticRegression"
+      }
+    },
+    "joint_neural": {
+      "n_states": 48,
+      "compute_rate": 0.8958333333333334,
+      "mean_reward": 0.41593077539582923,
+      "mean_matched": 1.0208333333333333,
+      "mean_incorrect": 0.5,
+      "mean_cost_s": 0.17483759656250678,
+      "success_rate": 0.4883720930232558,
+      "brier_score": 0.25617649086951944,
+      "brier_rows": 192,
+      "action_histogram": {
+        "b2h2": 16,
+        "b2h6": 12,
+        "b4h2": 2,
+        "b4h6": 13,
+        "read": 5
+      },
+      "threshold": -0.24013986930347478,
+      "models": {
+        "b2h2": "MLPClassifier",
+        "b2h6": "MLPClassifier",
+        "b4h2": "MLPClassifier",
+        "b4h6": "MLPClassifier"
+      }
+    }
+  }
+}

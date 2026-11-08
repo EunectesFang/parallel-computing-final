@@ -1,0 +1,88 @@
+{
+  "config": {
+    "branches": 4,
+    "horizon": 6,
+    "min_start": 3,
+    "ralcp_threshold": 0.6,
+    "seed": 13,
+    "arrival_gap": 0.3,
+    "max_len_a": 1.5,
+    "max_len_b": 20,
+    "split": "dev",
+    "predictor": "large",
+    "translator": "small",
+    "local_files_only": false,
+    "trust_remote_code": false
+  },
+  "cells": [
+    {
+      "predictor": "large",
+      "translator": "small",
+      "mode": "taf",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 18.65639926969641,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7573413004477819,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.483334937621709,
+      "mean_completion_s": 6.714659917583362,
+      "p95_completion_s": 14.28253910300001,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:1",
+      "predictor_dtype": "torch.float16",
+      "translator_dtype": "torch.float16",
+      "predict_s": 62.32054250000016,
+      "translate_s": 11.048102399999834,
+      "inference_s": 73.37591901100035,
+      "reuse_hits": 0,
+      "reuse_misses": 0,
+      "full_reuse_hits": 0
+    },
+    {
+      "predictor": "large",
+      "translator": "small",
+      "mode": "pfba",
+      "split": "dev",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 18.65639926969641,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.7573413004477819,
+        "model": "Unbabel/wmt22-comet-da"
+      },
+      "laal": 2.483334937621709,
+      "mean_completion_s": 6.888321288916743,
+      "p95_completion_s": 14.665369840000244,
+      "predictor_device": "cuda:0",
+      "translator_device": "cuda:1",
+      "predictor_dtype": "torch.float16",
+      "translator_dtype": "torch.float16",
+      "predict_s": 64.43631230100118,
+      "translate_s": 11.016465825000523,
+      "inference_s": 75.45985546700092,
+      "reuse_hits": 9,
+      "reuse_misses": 555,
+      "full_reuse_hits": 0
+    }
+  ],
+  "predictors": {
+    "small": "Qwen/Qwen2.5-0.5B",
+    "large": "Qwen/Qwen2.5-7B"
+  },
+  "translators": {
+    "small": "Helsinki-NLP/opus-mt-de-en",
+    "large": "Unbabel/TowerInstruct-7B-v0.2"
+  },
+  "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8"
+}

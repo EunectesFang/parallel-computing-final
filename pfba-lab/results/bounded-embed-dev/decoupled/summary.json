@@ -1,0 +1,151 @@
+{
+  "metadata": {
+    "config": {
+      "branches": 4,
+      "horizon": 6,
+      "min_start": 3,
+      "arrival_gap": 0.3,
+      "threshold": 0.6,
+      "seed": 13,
+      "ready_limit": 1,
+      "anchor_policy": "vote",
+      "anchor_threshold": null,
+      "bounded_threshold": 0.6,
+      "bounded_initial_steps": 2,
+      "bounded_initial_words": 1
+    },
+    "split": "dev",
+    "offset": 0,
+    "limit": 12,
+    "predictor": "Qwen/Qwen2.5-7B",
+    "translator": "Unbabel/TowerInstruct-7B-v0.2",
+    "predictor_device": "cuda:0",
+    "translator_device": "cuda:1",
+    "modes": [
+      "taf",
+      "bounded-1"
+    ],
+    "upstream_commit": "99e373a887e0556c4d50e9ea08497889037876f8",
+    "clock": "monotonic wall-clock, paced text replay",
+    "prediction_batch_size": 0,
+    "cpu_predictor_embedding": true,
+    "predictor_embedding_offload": {
+      "weight_bytes": 1089994752,
+      "weight_dtype": "torch.float16",
+      "weight_device": "cpu",
+      "execution_device": "cuda:0"
+    },
+    "predictor_dtype": "torch.float16",
+    "translator_dtype": "torch.float16",
+    "predictor_revision": "d149729398750b98c0af14eb82c78cfe92750796",
+    "translator_revision": "a240dfd3a0990c859ecfd4671e0ba9b923c04a43",
+    "torch": "2.11.0+cu130",
+    "gpu_names": [
+      "Tesla T4",
+      "Tesla T4"
+    ],
+    "code_sha256": {
+      "run_decoupled.py": "49a9d6b95c21593ff707ec0c07b858713a02356ac7c2311fc09334d59cd300e5",
+      "pipeline.py": "63ebe940973610f1d30e0df1db303e7b146bd11e8cbeeb3d71796b0e58f4393a",
+      "checkpoint.py": "f745898db6305cc368fb633cbce475234287e7bcbca9b571d4b86d16b98d7faa",
+      "run_pfba.py": "d8461eaa466882dbaccbcd7423f39016d7eb800b29427b4bbb11b29ad8d855c3",
+      "cpu_embedding.py": "4deb457aae2401d15a5567f1041d2990f50f9f8a65f375d0cbff62cc6ef57b32"
+    }
+  },
+  "cells": [
+    {
+      "mode": "taf",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 23.21826723467505,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.807565708955129,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8867032527923584,
+          0.7273588180541992,
+          0.6223586797714233,
+          0.7861466407775879,
+          0.8614282011985779,
+          0.7587118148803711,
+          0.8258799910545349,
+          0.8347726464271545,
+          0.7878332138061523,
+          0.9169397950172424,
+          0.795713484287262,
+          0.8869419693946838
+        ]
+      },
+      "laal": 2.596716445390981,
+      "mean_first_output_s": 2.0566442635000137,
+      "mean_completion_s": 20.171520353500018,
+      "p95_completion_s": 51.09066166699995,
+      "mean_drain_s": 20.171520353500018,
+      "actual_replay_s": 242.0611641060001,
+      "prediction_service_s": 65.87095435899937,
+      "translation_service_s": 168.97415682000099,
+      "overlap_s": 0.0,
+      "prediction_calls": 138,
+      "translation_calls": 150,
+      "translation_requests": 564,
+      "peak_ready": 0,
+      "discarded_predictions": 0,
+      "skipped_source_positions": 0,
+      "max_skipped_between_translations": 0,
+      "same_hypothesis_and_content_delays": 12,
+      "paired_candidate_steps": 138,
+      "matching_candidate_steps": 138
+    },
+    {
+      "mode": "bounded-1",
+      "n": 12,
+      "bleu": {
+        "status": "ok",
+        "score": 27.75967453914776,
+        "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1"
+      },
+      "comet": {
+        "status": "ok",
+        "score": 0.8237649401028951,
+        "model": "Unbabel/wmt22-comet-da",
+        "sentence_scores": [
+          0.8867032527923584,
+          0.792765200138092,
+          0.6223586797714233,
+          0.847454309463501,
+          0.8584413528442383,
+          0.7676538825035095,
+          0.8258799910545349,
+          0.8354400992393494,
+          0.8488872647285461,
+          0.9169397950172424,
+          0.795713484287262,
+          0.8869419693946838
+        ]
+      },
+      "laal": 2.8917761761086065,
+      "mean_first_output_s": 2.0553406441666673,
+      "mean_completion_s": 10.295421824166672,
+      "p95_completion_s": 18.714141659000006,
+      "mean_drain_s": 10.295421824166672,
+      "actual_replay_s": 123.55332071700013,
+      "prediction_service_s": 42.87615115099925,
+      "translation_service_s": 110.66509092699994,
+      "overlap_s": 37.20809377699936,
+      "prediction_calls": 89,
+      "translation_calls": 101,
+      "translation_requests": 368,
+      "peak_ready": 1,
+      "discarded_predictions": 0,
+      "skipped_source_positions": 49,
+      "max_skipped_between_translations": 1,
+      "same_hypothesis_and_content_delays": 2,
+      "paired_candidate_steps": 89,
+      "matching_candidate_steps": 89
+    }
+  ]
+}

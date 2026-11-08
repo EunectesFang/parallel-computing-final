@@ -1,0 +1,109 @@
+[{"stream_name":"stderr","time":20.187475519,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":20.187510789,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.187517531,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.187522302,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.187526886,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stdout","time":21.643678104,"data":"run_pfba.py SHA-256: d8461eaa466882dbaccbcd7423f39016d7eb800b29427b4bbb11b29ad8d855c3\n"}
+,{"stream_name":"stdout","time":21.643815344,"data":"pipeline.py SHA-256: 63ebe940973610f1d30e0df1db303e7b146bd11e8cbeeb3d71796b0e58f4393a\n"}
+,{"stream_name":"stdout","time":21.643932869,"data":"checkpoint.py SHA-256: f745898db6305cc368fb633cbce475234287e7bcbca9b571d4b86d16b98d7faa\n"}
+,{"stream_name":"stdout","time":21.644083554,"data":"run_decoupled.py SHA-256: cceaebf55c6987afaac72243118df6f4d28b968ef6aaa0257a4586c7712f07ae\n"}
+,{"stream_name":"stderr","time":42.60021592,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":60.078978264,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":60.079011385,"data":"I0000 00:00:1794022173.750900      51 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stderr","time":128.050032608,"data":"\rFetching 4 files:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rFetching 4 files:  25%|██▌       | 1/4 [01:02\u003c03:08, 62.77s/it]\rFetching 4 files: 100%|██████████| 4/4 [01:02\u003c00:00, 15.69s/it]\n"}
+,{"stream_name":"stderr","time":182.943048952,"data":"\rLoading checkpoint shards:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  25%|██▌       | 1/4 [00:04\u003c00:12,  4.12s/it]\rLoading checkpoint shards:  50%|█████     | 2/4 [00:14\u003c00:15,  7.94s/it]\rLoading checkpoint shards:  75%|███████▌  | 3/4 [00:29\u003c00:11, 11.25s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:44\u003c00:00, 12.39s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:44\u003c00:00, 11.02s/it]\n"}
+,{"stream_name":"stderr","time":301.96271173,"data":"\rFetching 6 files:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rFetching 6 files:  17%|█▋        | 1/6 [01:42\u003c08:34, 102.94s/it]\rFetching 6 files:  50%|█████     | 3/6 [01:52\u003c01:30, 30.22s/it] \rFetching 6 files: 100%|██████████| 6/6 [01:52\u003c00:00, 18.75s/it]\n"}
+,{"stream_name":"stderr","time":416.070563107,"data":"\rLoading checkpoint shards:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  17%|█▋        | 1/6 [00:16\u003c01:22, 16.42s/it]\rLoading checkpoint shards:  33%|███▎      | 2/6 [00:35\u003c01:12, 18.08s/it]\rLoading checkpoint shards:  50%|█████     | 3/6 [00:55\u003c00:56, 18.67s/it]\rLoading checkpoint shards:  67%|██████▋   | 4/6 [01:14\u003c00:37, 18.94s/it]\rLoading checkpoint shards:  83%|████████▎ | 5/6 [01:33\u003c00:19, 19.10s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 16.24s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 17.41s/it]\n"}
+,{"stream_name":"stdout","time":449.774661575,"data":"[pipeline] 1/64 sentences\n"}
+,{"stream_name":"stdout","time":477.842506909,"data":"[pipeline] 2/64 sentences\n"}
+,{"stream_name":"stdout","time":517.478586261,"data":"[pipeline] 3/64 sentences\n"}
+,{"stream_name":"stdout","time":567.276105606,"data":"[pipeline] 4/64 sentences\n"}
+,{"stream_name":"stdout","time":648.11571068,"data":"[pipeline] 5/64 sentences\n"}
+,{"stream_name":"stdout","time":702.667971244,"data":"[pipeline] 6/64 sentences\n"}
+,{"stream_name":"stdout","time":798.07286065,"data":"[pipeline] 7/64 sentences\n"}
+,{"stream_name":"stdout","time":847.251205655,"data":"[pipeline] 8/64 sentences\n"}
+,{"stream_name":"stdout","time":880.656995813,"data":"[pipeline] 9/64 sentences\n"}
+,{"stream_name":"stdout","time":951.829587094,"data":"[pipeline] 10/64 sentences\n"}
+,{"stream_name":"stdout","time":1026.632989641,"data":"[pipeline] 11/64 sentences\n"}
+,{"stream_name":"stdout","time":1067.461911632,"data":"[pipeline] 12/64 sentences\n"}
+,{"stream_name":"stdout","time":1186.868230756,"data":"[pipeline] 13/64 sentences\n"}
+,{"stream_name":"stdout","time":1345.922867375,"data":"[pipeline] 14/64 sentences\n"}
+,{"stream_name":"stdout","time":1389.22759097,"data":"[pipeline] 15/64 sentences\n"}
+,{"stream_name":"stdout","time":1494.793236925,"data":"[pipeline] 16/64 sentences\n"}
+,{"stream_name":"stdout","time":1635.940539023,"data":"[pipeline] 17/64 sentences\n"}
+,{"stream_name":"stdout","time":1718.224418853,"data":"[pipeline] 18/64 sentences\n"}
+,{"stream_name":"stdout","time":1882.616959562,"data":"[pipeline] 19/64 sentences\n"}
+,{"stream_name":"stdout","time":2061.144461683,"data":"[pipeline] 20/64 sentences\n"}
+,{"stream_name":"stdout","time":2259.270944042,"data":"[pipeline] 21/64 sentences\n"}
+,{"stream_name":"stdout","time":2464.795041546,"data":"[pipeline] 22/64 sentences\n"}
+,{"stream_name":"stdout","time":2532.033042805,"data":"[pipeline] 23/64 sentences\n"}
+,{"stream_name":"stdout","time":2779.439323579,"data":"[pipeline] 24/64 sentences\n"}
+,{"stream_name":"stdout","time":2810.314226948,"data":"[pipeline] 25/64 sentences\n"}
+,{"stream_name":"stdout","time":2991.087125765,"data":"[pipeline] 26/64 sentences\n"}
+,{"stream_name":"stdout","time":3155.834621599,"data":"[pipeline] 27/64 sentences\n"}
+,{"stream_name":"stdout","time":3199.897222175,"data":"[pipeline] 28/64 sentences\n"}
+,{"stream_name":"stdout","time":3215.26223853,"data":"[pipeline] 29/64 sentences\n"}
+,{"stream_name":"stdout","time":3265.769077419,"data":"[pipeline] 30/64 sentences\n"}
+,{"stream_name":"stdout","time":3363.634710453,"data":"[pipeline] 31/64 sentences\n"}
+,{"stream_name":"stdout","time":3424.099089471,"data":"[pipeline] 32/64 sentences\n"}
+,{"stream_name":"stdout","time":3455.38710935,"data":"[pipeline] 33/64 sentences\n"}
+,{"stream_name":"stdout","time":3553.677979936,"data":"[pipeline] 34/64 sentences\n"}
+,{"stream_name":"stdout","time":3636.271966839,"data":"[pipeline] 35/64 sentences\n"}
+,{"stream_name":"stdout","time":3676.591503066,"data":"[pipeline] 36/64 sentences\n"}
+,{"stream_name":"stdout","time":3780.391282388,"data":"[pipeline] 37/64 sentences\n"}
+,{"stream_name":"stdout","time":3957.560234472,"data":"[pipeline] 38/64 sentences\n"}
+,{"stream_name":"stdout","time":4040.155776583,"data":"[pipeline] 39/64 sentences\n"}
+,{"stream_name":"stdout","time":4110.818946899,"data":"[pipeline] 40/64 sentences\n"}
+,{"stream_name":"stdout","time":4175.548080381,"data":"[pipeline] 41/64 sentences\n"}
+,{"stream_name":"stdout","time":4272.016260975,"data":"[pipeline] 42/64 sentences\n"}
+,{"stream_name":"stdout","time":4446.636029476,"data":"[pipeline] 43/64 sentences\n"}
+,{"stream_name":"stdout","time":4543.062978561,"data":"[pipeline] 44/64 sentences\n"}
+,{"stream_name":"stdout","time":4623.49011888,"data":"[pipeline] 45/64 sentences\n"}
+,{"stream_name":"stdout","time":4705.315122343,"data":"[pipeline] 46/64 sentences\n"}
+,{"stream_name":"stdout","time":4794.298562668,"data":"[pipeline] 47/64 sentences\n"}
+,{"stream_name":"stdout","time":4878.925005825,"data":"[pipeline] 48/64 sentences\n"}
+,{"stream_name":"stdout","time":4935.069651618,"data":"[pipeline] 49/64 sentences\n"}
+,{"stream_name":"stdout","time":5050.008546554,"data":"[pipeline] 50/64 sentences\n"}
+,{"stream_name":"stdout","time":5155.228242286,"data":"[pipeline] 51/64 sentences\n"}
+,{"stream_name":"stdout","time":5214.061062841,"data":"[pipeline] 52/64 sentences\n"}
+,{"stream_name":"stdout","time":5281.101889371,"data":"[pipeline] 53/64 sentences\n"}
+,{"stream_name":"stdout","time":5342.025983039,"data":"[pipeline] 54/64 sentences\n"}
+,{"stream_name":"stdout","time":5504.10275133,"data":"[pipeline] 55/64 sentences\n"}
+,{"stream_name":"stdout","time":5649.431393563,"data":"[pipeline] 56/64 sentences\n"}
+,{"stream_name":"stdout","time":5675.540656808,"data":"[pipeline] 57/64 sentences\n"}
+,{"stream_name":"stdout","time":5707.941937152,"data":"[pipeline] 58/64 sentences\n"}
+,{"stream_name":"stdout","time":5815.639711872,"data":"[pipeline] 59/64 sentences\n"}
+,{"stream_name":"stdout","time":5896.746125099,"data":"[pipeline] 60/64 sentences\n"}
+,{"stream_name":"stdout","time":5988.573646872,"data":"[pipeline] 61/64 sentences\n"}
+,{"stream_name":"stdout","time":6125.778931674,"data":"[pipeline] 62/64 sentences\n"}
+,{"stream_name":"stdout","time":6194.08319686,"data":"[pipeline] 63/64 sentences\n"}
+,{"stream_name":"stdout","time":6359.144497332,"data":"[pipeline] 64/64 sentences\n"}
+,{"stream_name":"stderr","time":6360.606989254,"data":"/usr/local/lib/python3.13/dist-packages/torchmetrics/utilities/imports.py:23: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools\u003c81.\n"}
+,{"stream_name":"stderr","time":6360.607017023,"data":"  from pkg_resources import DistributionNotFound, get_distribution\n"}
+,{"stream_name":"stderr","time":6373.89830811,"data":"\rFetching 5 files:   0%|          | 0/5 [00:00\u003c?, ?it/s]\rFetching 5 files:  20%|██        | 1/5 [00:00\u003c00:00,  4.48it/s]\rFetching 5 files:  80%|████████  | 4/5 [00:10\u003c00:02,  2.95s/it]\rFetching 5 files: 100%|██████████| 5/5 [00:10\u003c00:00,  2.20s/it]\n"}
+,{"stream_name":"stderr","time":6384.971442048,"data":"INFO:pytorch_lightning.utilities.migration.utils:Lightning automatically upgraded your loaded checkpoint from v1.8.3.post1 to v2.6.6. To apply the upgrade to your files permanently, run `python -m pytorch_lightning.utilities.upgrade_checkpoint ../../root/.cache/huggingface/hub/models--Unbabel--wmt22-comet-da/snapshots/2760a223ac957f30acfb18c8aa649b01cf1d75f2/checkpoints/model.ckpt`\n"}
+,{"stream_name":"stderr","time":6395.050049954,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/core/saving.py:216: Found keys that are not in the model state dict but in the checkpoint: ['encoder.model.embeddings.position_ids']\n"}
+,{"stream_name":"stderr","time":6395.27328678,"data":"INFO:pytorch_lightning.utilities.rank_zero:GPU available: True (cuda), used: False\n"}
+,{"stream_name":"stderr","time":6395.273848711,"data":"INFO:pytorch_lightning.utilities.rank_zero:TPU available: False, using: 0 TPU cores\n"}
+,{"stream_name":"stderr","time":6395.273994609,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/trainer/setup.py:175: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.\n"}
+,{"stream_name":"stderr","time":6395.274103083,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.\n"}
+,{"stream_name":"stderr","time":6395.275720864,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.\n"}
+,{"stream_name":"stderr","time":6395.283317006,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.\n"}
+,{"stream_name":"stderr","time":6425.968264569,"data":"\rPredicting: 0it [00:00, ?it/s]\rPredicting: 0it [00:00, ?it/s]\rPredicting DataLoader 0:   0%|          | 0/8 [00:00\u003c?, ?it/s]\rPredicting DataLoader 0:  12%|█▎        | 1/8 [00:02\u003c00:15,  2.18s/it]\rPredicting DataLoader 0:  25%|██▌       | 2/8 [00:04\u003c00:14,  2.37s/it]\rPredicting DataLoader 0:  38%|███▊      | 3/8 [00:07\u003c00:12,  2.55s/it]\rPredicting DataLoader 0:  50%|█████     | 4/8 [00:10\u003c00:10,  2.73s/it]\rPredicting DataLoader 0:  62%|██████▎   | 5/8 [00:14\u003c00:08,  2.96s/it]\rPredicting DataLoader 0:  75%|███████▌  | 6/8 [00:19\u003c00:06,  3.18s/it]\rPredicting DataLoader 0:  88%|████████▊ | 7/8 [00:23\u003c00:03,  3.40s/it]\rPredicting DataLoader 0: 100%|██████████| 8/8 [00:30\u003c00:00,  3.83s/it]\rPredicting DataLoader 0: 100%|██████████| 8/8 [00:30\u003c00:00,  3.83s/it]\n"}
+,{"stream_name":"stderr","time":6427.033257273,"data":"INFO:pytorch_lightning.utilities.migration.utils:Lightning automatically upgraded your loaded checkpoint from v1.8.3.post1 to v2.6.6. To apply the upgrade to your files permanently, run `python -m pytorch_lightning.utilities.upgrade_checkpoint ../../root/.cache/huggingface/hub/models--Unbabel--wmt22-comet-da/snapshots/2760a223ac957f30acfb18c8aa649b01cf1d75f2/checkpoints/model.ckpt`\n"}
+,{"stream_name":"stderr","time":6436.151651904,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/core/saving.py:216: Found keys that are not in the model state dict but in the checkpoint: ['encoder.model.embeddings.position_ids']\n"}
+,{"stream_name":"stderr","time":6436.299760787,"data":"INFO:pytorch_lightning.utilities.rank_zero:GPU available: True (cuda), used: False\n"}
+,{"stream_name":"stderr","time":6436.299795387,"data":"INFO:pytorch_lightning.utilities.rank_zero:TPU available: False, using: 0 TPU cores\n"}
+,{"stream_name":"stderr","time":6436.29980254,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/trainer/setup.py:175: GPU available but not used. You can set it by doing `Trainer(accelerator='gpu')`.\n"}
+,{"stream_name":"stderr","time":6436.299813364,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.\n"}
+,{"stream_name":"stderr","time":6436.300287776,"data":"INFO:pytorch_lightning.utilities.rank_zero:💡 Tip: For seamless cloud uploads and versioning, try installing [litmodels](https://pypi.org/project/litmodels/) to enable LitModelCheckpoint, which syncs automatically with the Lightning model registry.\n"}
+,{"stream_name":"stderr","time":6436.307574846,"data":"/usr/local/lib/python3.13/dist-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.\n"}
+,{"stream_name":"stderr","time":6466.667090422,"data":"\rPredicting: 0it [00:00, ?it/s]\rPredicting: 0it [00:00, ?it/s]\rPredicting DataLoader 0:   0%|          | 0/8 [00:00\u003c?, ?it/s]\rPredicting DataLoader 0:  12%|█▎        | 1/8 [00:01\u003c00:13,  1.99s/it]\rPredicting DataLoader 0:  25%|██▌       | 2/8 [00:04\u003c00:13,  2.25s/it]\rPredicting DataLoader 0:  38%|███▊      | 3/8 [00:07\u003c00:12,  2.56s/it]\rPredicting DataLoader 0:  50%|█████     | 4/8 [00:10\u003c00:10,  2.73s/it]\rPredicting DataLoader 0:  62%|██████▎   | 5/8 [00:14\u003c00:08,  2.90s/it]\rPredicting DataLoader 0:  75%|███████▌  | 6/8 [00:19\u003c00:06,  3.23s/it]\rPredicting DataLoader 0:  88%|████████▊ | 7/8 [00:23\u003c00:03,  3.43s/it]\rPredicting DataLoader 0: 100%|██████████| 8/8 [00:30\u003c00:00,  3.79s/it]\rPredicting DataLoader 0: 100%|██████████| 8/8 [00:30\u003c00:00,  3.79s/it]\n"}
+,{"stream_name":"stdout","time":6466.680228236,"data":"[pipeline] wrote /kaggle/working/decoupled/summary.json\n"}
+,{"stream_name":"stderr","time":6477.341563853,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":6477.341594683,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":6477.678175274,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":6477.678217827,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":6478.561253863,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":6479.407914283,"data":"[NbConvertApp] Writing 391237 bytes to __results__.html\n"}
+]
