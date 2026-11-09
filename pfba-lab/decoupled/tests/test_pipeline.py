@@ -192,6 +192,26 @@ def test_bounded_skip_cadence_counts_completed_mt_steps_only(mode, cadence, cap)
                for span in trace.predictions)
 
 
+def test_early_fifo_uses_the_same_schedule_and_marks_only_nonfinal_steps():
+    class AwareTranslator(Translator):
+        def translate_batch(self, requests, prefix, final=False, early_stop_k=0, threshold=0.6):
+            self.calls.append((final, early_stop_k, list(requests), prefix))
+            return ["x"] * len(requests)
+
+    source = SOURCE
+    plain = AwareTranslator()
+    early = AwareTranslator()
+    fifo = run_sentence(source, "x x x", Predictor(), plain, CONFIG, "overlap-fifo")
+    stopped = run_sentence(source, "x x x", Predictor(), early, CONFIG, "overlap-fifo-early")
+    assert stopped.hypothesis == fifo.hypothesis
+    assert stopped.delays == fifo.delays
+    assert [step.read_pos for step in stopped.steps] == [step.read_pos for step in fifo.steps]
+    assert all(call[0] is False and call[1] == 4 for call in early.calls[:-1])
+    assert early.calls[-1][0] is True and early.calls[-1][1] == 0
+    assert all(call[1] == 0 for call in plain.calls)
+    assert early.calls[-1][2] == [source]
+
+
 def test_bounded_skip_cadence_must_be_positive():
     import pytest
     with pytest.raises(ValueError, match="skip_every"):

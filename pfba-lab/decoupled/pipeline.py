@@ -15,14 +15,15 @@ from time import perf_counter, sleep
 if not Path(__file__).with_name("run_pfba.py").is_file():
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "paired"))
 
-from run_pfba import arrived_words, derive_step_seed, laal_score, upstream_ralcp
+from run_pfba import arrived_words, call_translate_batch, derive_step_seed, laal_score, upstream_ralcp
 
 DEFAULT_MODES = ("taf", "overlap-fifo", "overlap-latest")
+EARLY_STOP_K = 4
 BOUNDED_SKIPS = {f"bounded-{cap}": cap for cap in (1, 2, 3)}
 NAMED_CADENCES = {f"bounded-1-every{cadence}": cadence for cadence in (2, 3)}
 BOUNDED_SKIPS.update({name: 1 for name in NAMED_CADENCES})
 SCHEDULERS = DEFAULT_MODES + tuple(BOUNDED_SKIPS)
-MODES = SCHEDULERS + tuple(f"{mode}-anchor" for mode in SCHEDULERS)
+MODES = SCHEDULERS + tuple(f"{mode}-anchor" for mode in SCHEDULERS) + ("overlap-fifo-early",)
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,9 @@ class Step:
     translation: Span
     candidate_sha256: str
     translation_requests: int
+    decode_new_tokens: int = 0
+    decode_continued_full: bool = False
+    decode_stopped_early: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,9 @@ def run_sentence(
     """
     if mode not in MODES:
         raise ValueError(f"unsupported mode: {mode}")
+    early_stop = mode == "overlap-fifo-early"
+    if early_stop:
+        mode = "overlap-fifo"
     anchored = mode.endswith("-anchor")
     scheduler = mode.removesuffix("-anchor")
     skip_cap = BOUNDED_SKIPS.get(scheduler)
@@ -157,7 +164,11 @@ def run_sentence(
             else:
                 anchor_index = len(requests)
                 batch = [*requests, observed]
-        outputs = translator.translate_batch(batch, " ".join(committed))
+        outputs = call_translate_batch(
+            translator, batch, " ".join(committed), final=final,
+            early_stop_k=EARLY_STOP_K if early_stop and not final else 0,
+            threshold=threshold)
+        stats = getattr(translator, "last_decode_stats", None) or {}
         if final:
             selected = outputs[0]
         elif anchor_index is None:
@@ -187,6 +198,8 @@ def run_sentence(
             read_pos, arrived_words(end, cfg.arrival_gap, n),
             new_words, Span(read_pos, start, end),
             hashlib.sha256(json.dumps(requests).encode()).hexdigest(), len(batch),
+            int(stats.get("new_tokens", 0)), bool(stats.get("continued_full", False)),
+            bool(stats.get("stopped_early", False)),
         ))
 
     def wait_for(deadline):

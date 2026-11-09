@@ -62,6 +62,75 @@ def upstream_ralcp(candidates: Sequence[str], threshold: float = 0.6) -> str:
     return translation
 
 
+def completed_word_text(raw: str, ended: bool) -> str:
+    """Finished words only. Completion is judged before strip().
+
+    A trailing space means the last word is finished. strip() would delete
+    that boundary, so it cannot be used to make the decision. EOS finishes
+    the last word even when no space follows it.
+    """
+    if ended or raw != raw.rstrip():
+        return raw.strip()
+    head, separator, _tail = raw.rpartition(" ")
+    if not separator:
+        return ""
+    return head.strip()
+
+
+def _word_count(text: str) -> int:
+    return 0 if text == "" else len(text.split(" "))
+
+
+@dataclass(frozen=True)
+class EarlyStopDecision:
+    action: str
+    texts: tuple[str, ...]
+    resolved_words: int
+    selected_words: int
+
+
+def vote_early_stop_decision(rows: Sequence[tuple[str, bool]], threshold: float,
+                             k: int) -> EarlyStopDecision:
+    """Decide whether a greedy batch may stop, must continue, or should finish.
+
+    rows are (completed words, ended). A word position is resolved only when
+    every row that is still generating has completed it. Ended rows keep their
+    short strings and still vote. k is a checkpoint: once that many words still
+    agree, the caller finishes the original token budget instead of truncating.
+    """
+    parsed = [( [] if text == "" else text.split(" "), ended) for text, ended in rows]
+    max_depth = max((len(words) for words, _ended in parsed), default=0)
+    resolved = 0
+    for index in range(max_depth):
+        if any((not ended) and len(words) <= index for words, ended in parsed):
+            break
+        resolved = index + 1
+    texts = tuple(" ".join(words[:resolved]) for words, _ended in parsed)
+    if resolved == 0 or k <= 0:
+        return EarlyStopDecision("continue", texts, resolved, 0)
+    selected = upstream_ralcp(texts, threshold)
+    selected_words = _word_count(selected)
+    if selected_words >= k:
+        return EarlyStopDecision("finish", texts, resolved, selected_words)
+    if selected_words < resolved:
+        return EarlyStopDecision("stop", texts, resolved, selected_words)
+    return EarlyStopDecision("continue", texts, resolved, selected_words)
+
+
+def call_translate_batch(translator, sources, prefix, **kwargs):
+    """Pass final/early-stop arguments only when this translator accepts them."""
+    import inspect
+    try:
+        parameters = inspect.signature(translator.translate_batch).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
+        accepted = kwargs
+    else:
+        accepted = {key: value for key, value in kwargs.items() if key in parameters}
+    return translator.translate_batch(sources, prefix, **accepted)
+
+
 def arrived_words(elapsed_s: float, gap_s: float, source_len: int) -> int:
     if source_len <= 0:
         return 0
@@ -129,7 +198,8 @@ class MTCache:
         if missing:
             self.misses += len(missing)
             results, seconds = timer.run(
-                "translate", lambda: translator.translate_batch([k[0] for k in missing], prefix))
+                "translate", lambda: call_translate_batch(
+                    translator, [k[0] for k in missing], prefix, final=final))
             for key, value in zip(missing, results):
                 self.cache[key] = value
         return [self.cache[key] for key in keys], seconds
@@ -181,13 +251,15 @@ def run_streaming(sentence_id, split, source, reference, predictor, translator,
             outs, seconds = [], 0.0
             for text in sources:
                 result, elapsed = timer.run(
-                    "translate", lambda text=text: translator.translate_batch([text], prefix))
+                    "translate", lambda text=text: call_translate_batch(
+                        translator, [text], prefix, final=final))
                 outs.append(result[0]); seconds += elapsed
         elif cache is not None:
             outs, seconds = cache.translate(translator, list(sources), prefix, timer, final)
         else:
             result, seconds = timer.run(
-                "translate", lambda: translator.translate_batch(list(sources), prefix))
+                "translate", lambda: call_translate_batch(
+                    translator, list(sources), prefix, final=final))
             outs = list(result)
         translate_s += seconds
         return outs, seconds
@@ -285,6 +357,64 @@ def _decode(tok, rows):
                        clean_up_tokenization_spaces=False).strip() for row in rows]
 
 
+def _generated_content(token_ids, eos_id, pad_id):
+    content = []
+    for token in token_ids:
+        if eos_id is not None and token == eos_id:
+            return content, True
+        if pad_id is not None and token == pad_id:
+            break
+        content.append(int(token))
+    return content, False
+
+
+def _vote_stop(tokenizer, prompt_len, eos_id, pad_id, threshold, k):
+    """Stopping criterion that uses the same generate() loop as full decoding.
+
+    Returning early does not change the greedy tokens already produced. Once k
+    agreed words are visible, generation continues to the original budget.
+    """
+    from transformers import StoppingCriteria, StoppingCriteriaList
+    torch = _torch()
+    state = {"continued_full": False, "stopped_early": False, "texts": None}
+
+    class _VoteStop(StoppingCriteria):
+        def __call__(self, input_ids, scores, **kwargs):
+            batch = input_ids.shape[0]
+            keep_going = torch.zeros(batch, dtype=torch.bool, device=input_ids.device)
+            if state["continued_full"] or input_ids.shape[1] < prompt_len:
+                return keep_going
+            rows = []
+            for row in input_ids:
+                content, ended = _generated_content(row[prompt_len:].tolist(), eos_id, pad_id)
+                raw = tokenizer.decode(content, skip_special_tokens=True,
+                                       clean_up_tokenization_spaces=False)
+                rows.append((completed_word_text(raw, ended), ended))
+            decision = vote_early_stop_decision(rows, threshold, k)
+            if decision.action == "finish":
+                state["continued_full"] = True
+                return keep_going
+            if decision.action == "stop":
+                state["stopped_early"] = True
+                state["texts"] = list(decision.texts)
+                return torch.ones(batch, dtype=torch.bool, device=input_ids.device)
+            return keep_going
+
+    return StoppingCriteriaList([_VoteStop()]), state
+
+
+def _record_decode(translator, output, prompt_len, state):
+    new_rows = output[:, prompt_len:]
+    translator.last_decode_stats = {
+        "new_tokens": int(new_rows.shape[1]),
+        "continued_full": bool(state and state["continued_full"]),
+        "stopped_early": bool(state and state["stopped_early"]),
+    }
+    if state and state["stopped_early"]:
+        return list(state["texts"])
+    return _decode(translator.tok, new_rows)
+
+
 class QwenPredictor:
     def __init__(self, model_id, device, dtype, local_only, trust):
         self.model_id, self.device, self.dtype = model_id, device, dtype
@@ -337,17 +467,24 @@ class MarianTranslator(_Translator):
         config = self.model.config
         self.start = int(config.decoder_start_token_id or config.pad_token_id)
 
-    def translate_batch(self, sources, prefix):
+    def translate_batch(self, sources, prefix, final=False, early_stop_k=0, threshold=0.6):
         torch = _torch()
         batch = self.tok(list(sources), return_tensors="pt", padding=True,
                          truncation=True, max_length=512).to(self.device)
         prefix_ids = self.tok(text_target=prefix, add_special_tokens=False)["input_ids"] if prefix else []
         decoder = torch.tensor([[self.start] + prefix_ids] * len(sources), device=self.device)
         max_new = max(1, 96 - len(prefix_ids))
+        criteria, state = (None, None)
+        if not final and early_stop_k > 0:
+            criteria, state = _vote_stop(
+                self.tok, decoder.shape[1], self.tok.eos_token_id, self.tok.pad_token_id,
+                threshold, early_stop_k)
         with torch.inference_mode():
+            kwargs = {} if criteria is None else {"stopping_criteria": criteria}
             output = self.model.generate(**batch, decoder_input_ids=decoder,
-                                         max_new_tokens=max_new, num_beams=1, do_sample=False)
-        return _decode(self.tok, output[:, decoder.shape[1]:])
+                                         max_new_tokens=max_new, num_beams=1, do_sample=False,
+                                         **kwargs)
+        return _record_decode(self, output, decoder.shape[1], state)
 
 
 class TowerTranslator(_Translator):
@@ -357,18 +494,26 @@ class TowerTranslator(_Translator):
             AutoModelForCausalLM, self.model_id, self.device, self.dtype,
             self.local_only, self.trust, left=True)
 
-    def translate_batch(self, sources, prefix):
+    def translate_batch(self, sources, prefix, final=False, early_stop_k=0, threshold=0.6):
         torch = _torch()
         prompts = [MT_TEMPLATE.format(src=source, prefix=prefix) for source in sources]
         batch = self.tok(prompts, padding=True, return_tensors="pt",
                          truncation=True, max_length=2048).to(self.device)
         prefix_ids = self.tok(prefix, add_special_tokens=False)["input_ids"] if prefix else []
         max_new = max(1, 96 - len(prefix_ids))
+        prompt_len = batch["input_ids"].shape[1]
+        criteria, state = (None, None)
+        if not final and early_stop_k > 0:
+            criteria, state = _vote_stop(
+                self.tok, prompt_len, self.tok.eos_token_id, self.tok.pad_token_id,
+                threshold, early_stop_k)
         with torch.inference_mode():
+            kwargs = {} if criteria is None else {"stopping_criteria": criteria}
             output = self.model.generate(
                 **batch, max_new_tokens=max_new, num_beams=1, do_sample=False,
-                pad_token_id=self.tok.pad_token_id, eos_token_id=self.tok.eos_token_id)
-        return _decode(self.tok, output[:, batch["input_ids"].shape[1]:])
+                pad_token_id=self.tok.pad_token_id, eos_token_id=self.tok.eos_token_id,
+                **kwargs)
+        return _record_decode(self, output, prompt_len, state)
 
 
 def load_translator(name, model_id, device, cfg):

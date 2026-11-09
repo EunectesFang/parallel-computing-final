@@ -1,0 +1,13 @@
+{
+  "id": "eunectesqaq/pfba-week-fold1",
+  "title": "pfba week fold1",
+  "code_file": "kaggle_entry.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [],
+  "competition_sources": [],
+  "kernel_sources": []
+}

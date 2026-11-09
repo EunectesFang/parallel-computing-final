@@ -22,6 +22,7 @@ def main() -> None:
         "checkpoint.py": ROOT / "decoupled" / "checkpoint.py",
         "cpu_embedding.py": ROOT / "decoupled" / "cpu_embedding.py",
         "run_decoupled.py": ROOT / "decoupled" / "run_decoupled.py",
+        "paired_evidence.py": ROOT / "paired_evidence.py",
     }
     script = BOOTSTRAP + '\nroot = Path("/tmp/pfba_pipeline")\nroot.mkdir(exist_ok=True)\n'
     for name, path in sources.items():
