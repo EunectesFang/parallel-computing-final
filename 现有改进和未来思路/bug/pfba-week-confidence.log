@@ -1,0 +1,124 @@
+[{"stream_name":"stderr","time":17.952167284,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":17.952200967,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":17.952207004999998,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":17.952210784000002,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":17.952214592,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stdout","time":18.177864619,"data":"run_pfba.py SHA-256: f0ad07e2d2dd17809690172e03f99deef7da28481c96753052e8d83d09a0ac27\n"}
+,{"stream_name":"stdout","time":18.178050478,"data":"week_run.py SHA-256: 0927f4d3882ed59abf3bf711353daf2a2fa7c500356b08129ce15c92cce7843b\n"}
+,{"stream_name":"stdout","time":18.178217058,"data":"cpu_embedding.py SHA-256: 4deb457aae2401d15a5567f1041d2990f50f9f8a65f375d0cbff62cc6ef57b32\n"}
+,{"stream_name":"stdout","time":18.624230546,"data":"[week] train=2422 holdout=295 excluded_bucket0\n"}
+,{"stream_name":"stderr","time":33.902695328,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":47.465596626,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":47.465632824,"data":"I0000 00:00:1794212962.774897      33 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stdout","time":244.920586004,"data":"[week] labeled 25 new sentences\n"}
+,{"stream_name":"stdout","time":396.130704009,"data":"[week] labeled 50 new sentences\n"}
+,{"stream_name":"stdout","time":564.1186153,"data":"[week] labeled 75 new sentences\n"}
+,{"stream_name":"stdout","time":712.472639565,"data":"[week] labeled 100 new sentences\n"}
+,{"stream_name":"stdout","time":879.75311455,"data":"[week] labeled 125 new sentences\n"}
+,{"stream_name":"stdout","time":1049.707224737,"data":"[week] labeled 150 new sentences\n"}
+,{"stream_name":"stdout","time":1168.481347671,"data":"[week] labeled 175 new sentences\n"}
+,{"stream_name":"stdout","time":1365.99021313,"data":"[week] 200 sentences in 1302s; projected 4.38h\n"}
+,{"stream_name":"stdout","time":1365.990246397,"data":"[week] labeled 200 new sentences\n"}
+,{"stream_name":"stdout","time":1504.792180856,"data":"[week] labeled 225 new sentences\n"}
+,{"stream_name":"stdout","time":1683.126155898,"data":"[week] labeled 250 new sentences\n"}
+,{"stream_name":"stdout","time":1866.504053119,"data":"[week] labeled 275 new sentences\n"}
+,{"stream_name":"stdout","time":2025.20157752,"data":"[week] labeled 300 new sentences\n"}
+,{"stream_name":"stdout","time":2193.655624334,"data":"[week] labeled 325 new sentences\n"}
+,{"stream_name":"stdout","time":2385.306573301,"data":"[week] labeled 350 new sentences\n"}
+,{"stream_name":"stdout","time":2493.993873776,"data":"[week] labeled 375 new sentences\n"}
+,{"stream_name":"stdout","time":2705.81081769,"data":"[week] labeled 400 new sentences\n"}
+,{"stream_name":"stdout","time":2918.719491444,"data":"[week] labeled 425 new sentences\n"}
+,{"stream_name":"stdout","time":3073.807741723,"data":"[week] labeled 450 new sentences\n"}
+,{"stream_name":"stdout","time":3226.558875991,"data":"[week] labeled 475 new sentences\n"}
+,{"stream_name":"stdout","time":3404.341669318,"data":"[week] labeled 500 new sentences\n"}
+,{"stream_name":"stdout","time":3616.813609298,"data":"[week] labeled 525 new sentences\n"}
+,{"stream_name":"stdout","time":3751.977559461,"data":"[week] labeled 550 new sentences\n"}
+,{"stream_name":"stdout","time":3857.248597583,"data":"[week] labeled 575 new sentences\n"}
+,{"stream_name":"stdout","time":3977.709698344,"data":"[week] labeled 600 new sentences\n"}
+,{"stream_name":"stdout","time":4114.01743499,"data":"[week] labeled 625 new sentences\n"}
+,{"stream_name":"stdout","time":4261.149461189,"data":"[week] labeled 650 new sentences\n"}
+,{"stream_name":"stdout","time":4422.840548344,"data":"[week] labeled 675 new sentences\n"}
+,{"stream_name":"stdout","time":4626.675806432,"data":"[week] labeled 700 new sentences\n"}
+,{"stream_name":"stdout","time":4786.39350553,"data":"[week] labeled 725 new sentences\n"}
+,{"stream_name":"stdout","time":4907.501914612,"data":"[week] labeled 750 new sentences\n"}
+,{"stream_name":"stdout","time":5044.763912048,"data":"[week] labeled 775 new sentences\n"}
+,{"stream_name":"stdout","time":5224.185850457,"data":"[week] labeled 800 new sentences\n"}
+,{"stream_name":"stdout","time":5397.787627367,"data":"[week] labeled 825 new sentences\n"}
+,{"stream_name":"stdout","time":5584.224167584,"data":"[week] labeled 850 new sentences\n"}
+,{"stream_name":"stdout","time":5751.371412761,"data":"[week] labeled 875 new sentences\n"}
+,{"stream_name":"stdout","time":5926.689277222,"data":"[week] labeled 900 new sentences\n"}
+,{"stream_name":"stdout","time":6056.736952498,"data":"[week] labeled 925 new sentences\n"}
+,{"stream_name":"stdout","time":6172.889442985,"data":"[week] labeled 950 new sentences\n"}
+,{"stream_name":"stdout","time":6352.690733655,"data":"[week] labeled 975 new sentences\n"}
+,{"stream_name":"stdout","time":6545.379950672,"data":"[week] labeled 1000 new sentences\n"}
+,{"stream_name":"stdout","time":6677.478815471,"data":"[week] labeled 1025 new sentences\n"}
+,{"stream_name":"stdout","time":6842.332142009,"data":"[week] labeled 1050 new sentences\n"}
+,{"stream_name":"stdout","time":7069.686937049,"data":"[week] labeled 1075 new sentences\n"}
+,{"stream_name":"stdout","time":7205.343954484,"data":"[week] labeled 1100 new sentences\n"}
+,{"stream_name":"stdout","time":7320.857724722,"data":"[week] labeled 1125 new sentences\n"}
+,{"stream_name":"stdout","time":7451.863665732,"data":"[week] labeled 1150 new sentences\n"}
+,{"stream_name":"stdout","time":7606.798701107,"data":"[week] labeled 1175 new sentences\n"}
+,{"stream_name":"stdout","time":7749.960805778,"data":"[week] labeled 1200 new sentences\n"}
+,{"stream_name":"stdout","time":7920.255942718,"data":"[week] labeled 1225 new sentences\n"}
+,{"stream_name":"stdout","time":8045.070093316,"data":"[week] labeled 1250 new sentences\n"}
+,{"stream_name":"stdout","time":8167.341861619,"data":"[week] labeled 1275 new sentences\n"}
+,{"stream_name":"stdout","time":8326.899675227,"data":"[week] labeled 1300 new sentences\n"}
+,{"stream_name":"stdout","time":8441.468609445,"data":"[week] labeled 1325 new sentences\n"}
+,{"stream_name":"stdout","time":8587.131805871,"data":"[week] labeled 1350 new sentences\n"}
+,{"stream_name":"stdout","time":8753.574993196,"data":"[week] labeled 1375 new sentences\n"}
+,{"stream_name":"stdout","time":8970.446943756,"data":"[week] labeled 1400 new sentences\n"}
+,{"stream_name":"stdout","time":9136.402758794,"data":"[week] labeled 1425 new sentences\n"}
+,{"stream_name":"stdout","time":9391.378577727,"data":"[week] labeled 1450 new sentences\n"}
+,{"stream_name":"stdout","time":9574.104094389,"data":"[week] labeled 1475 new sentences\n"}
+,{"stream_name":"stdout","time":9799.21295314,"data":"[week] labeled 1500 new sentences\n"}
+,{"stream_name":"stdout","time":10015.531771609,"data":"[week] labeled 1525 new sentences\n"}
+,{"stream_name":"stdout","time":10209.233334243,"data":"[week] labeled 1550 new sentences\n"}
+,{"stream_name":"stdout","time":10439.861056408,"data":"[week] labeled 1575 new sentences\n"}
+,{"stream_name":"stdout","time":10655.603255137,"data":"[week] labeled 1600 new sentences\n"}
+,{"stream_name":"stdout","time":10866.081631253,"data":"[week] labeled 1625 new sentences\n"}
+,{"stream_name":"stdout","time":11068.997571196,"data":"[week] labeled 1650 new sentences\n"}
+,{"stream_name":"stdout","time":11241.159177255,"data":"[week] labeled 1675 new sentences\n"}
+,{"stream_name":"stdout","time":11477.863539681,"data":"[week] labeled 1700 new sentences\n"}
+,{"stream_name":"stdout","time":11657.24523608,"data":"[week] labeled 1725 new sentences\n"}
+,{"stream_name":"stdout","time":11940.388343246,"data":"[week] labeled 1750 new sentences\n"}
+,{"stream_name":"stdout","time":12115.00260481,"data":"[week] labeled 1775 new sentences\n"}
+,{"stream_name":"stdout","time":12266.299332246,"data":"[week] labeled 1800 new sentences\n"}
+,{"stream_name":"stdout","time":12419.347192502,"data":"[week] labeled 1825 new sentences\n"}
+,{"stream_name":"stdout","time":12570.071551879,"data":"[week] labeled 1850 new sentences\n"}
+,{"stream_name":"stdout","time":12756.894591977,"data":"[week] labeled 1875 new sentences\n"}
+,{"stream_name":"stdout","time":13031.810984702,"data":"[week] labeled 1900 new sentences\n"}
+,{"stream_name":"stdout","time":13217.651151746,"data":"[week] labeled 1925 new sentences\n"}
+,{"stream_name":"stdout","time":13373.250976374,"data":"[week] labeled 1950 new sentences\n"}
+,{"stream_name":"stdout","time":13539.673157999,"data":"[week] labeled 1975 new sentences\n"}
+,{"stream_name":"stdout","time":13720.535997672,"data":"[week] labeled 2000 new sentences\n"}
+,{"stream_name":"stdout","time":13927.56717395,"data":"[week] labeled 2025 new sentences\n"}
+,{"stream_name":"stdout","time":14081.165948475,"data":"[week] labeled 2050 new sentences\n"}
+,{"stream_name":"stdout","time":14229.842362604,"data":"[week] labeled 2075 new sentences\n"}
+,{"stream_name":"stdout","time":14420.082553086,"data":"[week] labeled 2100 new sentences\n"}
+,{"stream_name":"stdout","time":14655.469005082,"data":"[week] labeled 2125 new sentences\n"}
+,{"stream_name":"stdout","time":14767.19930176,"data":"[week] labeled 2150 new sentences\n"}
+,{"stream_name":"stdout","time":14895.439449879,"data":"[week] labeled 2175 new sentences\n"}
+,{"stream_name":"stdout","time":15058.641611921,"data":"[week] labeled 2200 new sentences\n"}
+,{"stream_name":"stdout","time":15197.356847725,"data":"[week] labeled 2225 new sentences\n"}
+,{"stream_name":"stdout","time":15320.305118979,"data":"[week] labeled 2250 new sentences\n"}
+,{"stream_name":"stdout","time":15480.232598947,"data":"[week] labeled 2275 new sentences\n"}
+,{"stream_name":"stdout","time":15606.103219218,"data":"[week] labeled 2300 new sentences\n"}
+,{"stream_name":"stdout","time":15741.494642379,"data":"[week] labeled 2325 new sentences\n"}
+,{"stream_name":"stdout","time":15852.514587688,"data":"[week] labeled 2350 new sentences\n"}
+,{"stream_name":"stdout","time":16059.025026453,"data":"[week] labeled 2375 new sentences\n"}
+,{"stream_name":"stdout","time":16348.593261435,"data":"[week] labeled 2400 new sentences\n"}
+,{"stream_name":"stdout","time":16555.788150695,"data":"[week] train diagnostic {\"n\": 10044, \"label_read_rate\": 0.25368380546569824, \"predicted_read_rate\": 0.11618877202272415, \"early_label_read_rate\": 0.16417290270328522, \"early_predicted_read_rate\": 0.0008312552236020565}\n"}
+,{"stream_name":"stdout","time":18280.465081601,"data":"[week] small holdout {\"learned\": {\"n\": 295, \"bleu\": 22.210694387014488, \"laal\": 1.9625621848150832, \"mean_completion_s\": 5.440163501732084, \"read_fraction\": 0.09853782581055308}, \"fixed_4_6\": {\"n\": 295, \"bleu\": 25.156455200597573, \"laal\": 2.29163894221445, \"mean_completion_s\": 5.457906653383124, \"read_fraction\": 0.0}}\n"}
+,{"stream_name":"stdout","time":18280.623768719,"data":"[week] starting the 7B holdout slice\n"}
+,{"stream_name":"stderr","time":18346.901186937,"data":"\rFetching 4 files:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rFetching 4 files:  25%|██▌       | 1/4 [01:05\u003c03:16, 65.43s/it]\rFetching 4 files: 100%|██████████| 4/4 [01:05\u003c00:00, 16.36s/it]\n"}
+,{"stream_name":"stderr","time":18400.905323739,"data":"\rLoading checkpoint shards:   0%|          | 0/4 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  25%|██▌       | 1/4 [00:11\u003c00:33, 11.07s/it]\rLoading checkpoint shards:  50%|█████     | 2/4 [00:24\u003c00:24, 12.47s/it]\rLoading checkpoint shards:  75%|███████▌  | 3/4 [00:39\u003c00:13, 13.75s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:53\u003c00:00, 13.91s/it]\rLoading checkpoint shards: 100%|██████████| 4/4 [00:53\u003c00:00, 13.49s/it]\n"}
+,{"stream_name":"stderr","time":18519.61674057,"data":"\rFetching 6 files:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rFetching 6 files:  17%|█▋        | 1/6 [01:44\u003c08:42, 104.44s/it]\rFetching 6 files:  33%|███▎      | 2/6 [01:52\u003c03:10, 47.73s/it] \rFetching 6 files: 100%|██████████| 6/6 [01:52\u003c00:00, 18.75s/it]\n"}
+,{"stream_name":"stderr","time":18632.954743875,"data":"\rLoading checkpoint shards:   0%|          | 0/6 [00:00\u003c?, ?it/s]\rLoading checkpoint shards:  17%|█▋        | 1/6 [00:16\u003c01:21, 16.28s/it]\rLoading checkpoint shards:  33%|███▎      | 2/6 [00:35\u003c01:12, 18.03s/it]\rLoading checkpoint shards:  50%|█████     | 3/6 [00:54\u003c00:55, 18.64s/it]\rLoading checkpoint shards:  67%|██████▋   | 4/6 [01:14\u003c00:37, 18.92s/it]\rLoading checkpoint shards:  83%|████████▎ | 5/6 [01:33\u003c00:19, 19.09s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 16.24s/it]\rLoading checkpoint shards: 100%|██████████| 6/6 [01:44\u003c00:00, 17.40s/it]\n"}
+,{"stream_name":"stdout","time":20224.156893562,"data":"[week] large slice {\"n\": 64, \"early_stop_k\": 4, \"learned\": {\"n\": 64, \"bleu\": 20.424352966100592, \"laal\": 1.3658497797851823, \"mean_completion_s\": 9.075065365576824, \"read_fraction\": 0.0}, \"fixed_4_6\": {\"n\": 64, \"bleu\": 25.0611252321353, \"laal\": 1.7648257927659978, \"mean_completion_s\": 16.914516994062957, \"read_fraction\": 0.0}}\n"}
+,{"stream_name":"stderr","time":20232.319531964,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":20232.319569705,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":20232.595973106,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":20232.596003795,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":20233.50211828,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":20234.23755979,"data":"[NbConvertApp] Writing 410453 bytes to __results__.html\n"}
+]
