@@ -1,0 +1,64 @@
+{
+  "train_sentences": 2422,
+  "holdout_sentences": 295,
+  "labeled_sentences": 2406,
+  "small": {
+    "learned": {
+      "n": 295,
+      "bleu": 22.210694387014488,
+      "laal": 1.9625621848150832,
+      "mean_completion_s": 5.440163501732084,
+      "read_fraction": 0.09853782581055308
+    },
+    "fixed_4_6": {
+      "n": 295,
+      "bleu": 25.156455200597573,
+      "laal": 2.29163894221445,
+      "mean_completion_s": 5.457906653383124,
+      "read_fraction": 0.0
+    }
+  },
+  "weights": {
+    "lambda": 1.0,
+    "beta": 0.5,
+    "read_threshold": 0.5,
+    "gamma_not_used": 0.25,
+    "eta_not_used": 1.0
+  },
+  "reward": "read=-matched_of_best_quality; write=quality-beta*normalized_cost",
+  "split": {
+    "holdout_bucket": 1,
+    "excluded_buckets": [
+      0,
+      1
+    ]
+  },
+  "trajectory": "unlabeled steps wait; labeled steps commit the reward argmax",
+  "train_diagnostic": {
+    "n": 10044,
+    "label_read_rate": 0.25368380546569824,
+    "predicted_read_rate": 0.11618877202272415,
+    "early_label_read_rate": 0.16417290270328522,
+    "early_predicted_read_rate": 0.0008312552236020565
+  },
+  "early_stop_on_small": false,
+  "cross_step_kv": false,
+  "large": {
+    "n": 64,
+    "early_stop_k": 4,
+    "learned": {
+      "n": 64,
+      "bleu": 20.424352966100592,
+      "laal": 1.3658497797851823,
+      "mean_completion_s": 9.075065365576824,
+      "read_fraction": 0.0
+    },
+    "fixed_4_6": {
+      "n": 64,
+      "bleu": 25.0611252321353,
+      "laal": 1.7648257927659978,
+      "mean_completion_s": 16.914516994062957,
+      "read_fraction": 0.0
+    }
+  }
+}
