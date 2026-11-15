@@ -70,6 +70,7 @@ ceil(threshold*branches)/branches)`.
 | `evaluator.py` | Trace summaries, status-aware BLEU/COMET, paired bootstrap |
 | `checkpoint.py` | Save/load state, config, feature stats, cost records, seed, git commit |
 | `cli.py` | `--dry-run`, synthetic `--smoke`, and explicit unimplemented real-data paths |
+| `kaggle.py` | Real-model adapters, cost calibration, dev labeling with resume, preflight/dev/confirm runs |
 | `tests/` | CPU-only unit and integration tests; all model adapters are fakes |
 
 ## Numeric features (exactly 34)
@@ -349,7 +350,88 @@ CLI does not download or load model weights.
 * The smoke path is synthetic and its outputs are never reported as translation
   quality.
 
-## Kaggle plan (stub; not yet run)
+## Real-model Kaggle commands
+
+`controller_v3.kaggle` is the only module that loads real weights. It reads
+`QwenPredictor`, `load_translator`, `resolve_devices`, and `StreamConfig` from
+`pfba-lab/paired/run_pfba.py`. Model-pair ids are `small -> (0, 0)` and
+`large -> (1, 1)`; those ids index the measured cost table and are only
+meaningful together with calibration records measured for the same adapter
+pair.
+
+Run every command from `pfba-lab/week` (or from `/tmp/pfba_cavc/week` inside
+the packaged Kaggle kernel):
+
+```bash
+cd pfba-lab/week
+
+# Plan only: prints the split policy and expected hours. Loads no model and no
+# dataset.
+"D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle --mode dry-run
+
+# Preflight (dev sentences only; ~0.5-1 h): calibrate the cost table, label a
+# few states, train, checkpoint, roll out a few sentences.
+"D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle \
+  --mode preflight --limit 8 --predictor small --translator small \
+  --label-states 3 --rollout-sentences 2 \
+  --output-dir outputs/cavc_preflight
+
+# Development run (~4-6 h): label dev hash buckets 2-9, train, and roll out
+# dev holdout bucket 1. `--max-hours` bounds the labeling/rollout loops, and
+# labels.jsonl flushes one row per sentence so a later session resumes by
+# sentence_id.
+"D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle \
+  --mode dev --limit 0 --stride 4 --max-hours 10 \
+  --predictor small --translator small \
+  --output-dir outputs/cavc_dev
+
+# Frozen confirmation (~1-2 h): test split only, never tuned. The clean slice
+# starts at test:0140. An earlier --offset raises ValueError unless
+# --allow-consumed is passed explicitly for a diagnostic rerun.
+"D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle \
+  --mode confirm --offset 140 --limit 64 \
+  --checkpoint outputs/cavc_dev/checkpoint.pt \
+  --output-dir outputs/cavc_confirm
+```
+
+Each real run writes `summary.json`, `traces.jsonl`, `config.json`,
+`cost_records.json`, and `checkpoint.pt` under `--output-dir`, plus the git
+commit recorded in `summary.json` and the checkpoint. BLEU/COMET carry the
+status returned by `run_pfba`: without `sacrebleu` BLEU is
+`{"status": "unavailable"}` with no score, and COMET is `skipped` because
+loading it downloads model weights. No metric is ever invented.
+
+`confirm` refuses an offset below `test:0140` unless `--allow-consumed` is
+given. The test slice is never used to choose losses, thresholds, budgets, or
+fallback rules.
+
+### Packaging the Kaggle kernel
+
+```bash
+"D:/MINICONDA/envs/py312/python.exe" pfba-lab/prepare_cavc_kernel.py
+```
+
+This writes `pfba-lab/kaggle-runs/pfba-cavc-v3/kaggle_entry.py` and
+`kernel-metadata.json`, embedding every `controller_v3/*.py`,
+`paired/run_pfba.py`, and `decoupled/cpu_embedding.py` under `/tmp/pfba_cavc`
+with the repository-relative layout (`week/controller_v3/*.py`,
+`week/cpu_embedding.py`, `paired/run_pfba.py`) so `parents[2] / "paired"`
+resolves. It prints the generated paths and the SHA-256 of every bundled file.
+It never pushes or submits to Kaggle.
+
+Expected total: roughly **7-11 h** (preflight 0.5-1 h, dev 4-6 h, confirm
+1-2 h), leaving buffer inside a ~23-30 h weekly quota. A single Kaggle session
+is capped near 12 h; resume a dev run by rerunning the same command.
+
+### Tests without models
+
+The wiring tests inject fake adapters, so the whole suite stays CPU-only:
+
+```bash
+"D:/MINICONDA/envs/py312/python.exe" -m pytest -q pfba-lab/week/controller_v3/tests
+```
+
+## Kaggle plan (wiring implemented; not yet run on Kaggle)
 
 Data is WMT German-to-English: **dev = newstest2013** (3,003 sentences) and
 **test = newstest2015** (2,169 sentences).
