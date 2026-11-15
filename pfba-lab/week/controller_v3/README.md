@@ -405,7 +405,11 @@ status returned by `run_pfba`: without `sacrebleu` BLEU is
 loading it downloads model weights. No metric is ever invented.
 
 `confirm` refuses an offset below `test:0140` unless `--allow-consumed` is
-given. The test slice is never used to choose losses, thresholds, budgets, or
+given. It also refuses a checkpoint whose `extra["trained"]` is false or
+missing; `--allow-untrained` exists only for diagnostic runs and still reports
+`trained: false`. A deadline-stopped `dev` run never writes an untrained
+`checkpoint.pt`, so a later confirm cannot mistake a file for trained weights.
+The test slice is never used to choose losses, thresholds, budgets, or
 fallback rules.
 
 ### Packaging the Kaggle kernel

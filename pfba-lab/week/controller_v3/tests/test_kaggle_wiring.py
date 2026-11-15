@@ -976,3 +976,134 @@ def test_reuse_cost_records_rejects_other_model_pair(tmp_path):
     )
     assert kaggle._reuse_cost_records(path, 0, 0) is not None
     assert kaggle._reuse_cost_records(path, 1, 1) is None
+
+
+# ----------------------------------------------------------------------
+# Fix round 2: never present untrained weights as trained
+# ----------------------------------------------------------------------
+def test_deadline_skip_without_prior_checkpoint_writes_no_checkpoint(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+
+    def run(max_hours):
+        return kaggle.run_dev(
+            limit=0,
+            stride=2,
+            output_dir=str(tmp_path),
+            max_hours=max_hours,
+            seed=cfg.seed,
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=harness["sentences"],
+            cfg=cfg,
+            predictor_id=0,
+            translator_id=0,
+            timer=harness["timer"],
+        )
+
+    run(max_hours=1.0)
+    checkpoint = tmp_path / "checkpoint.pt"
+    assert checkpoint.is_file()
+    # Simulate labels surviving a killed session whose checkpoint was lost.
+    checkpoint.unlink()
+
+    summary = run(max_hours=0.0)
+    assert summary["stopped_reason"] == "deadline"
+    assert summary["trained"] is False
+    assert summary["checkpoint"]["status"] == "not_written"
+    assert summary["checkpoint"]["path"] is None
+    assert summary["artifacts"]["checkpoint"] is None
+    assert not checkpoint.exists()
+
+
+def _write_checkpoint(path, harness, extra):
+    """Write a controller checkpoint with a caller-controlled `trained` flag."""
+    cfg = harness["cfg"]
+    kaggle.save_checkpoint(
+        path,
+        harness["network"],
+        cfg,
+        [0.0] * cfg.numeric_dim,
+        [1.0] * cfg.numeric_dim,
+        None,
+        extra={
+            "vocab": list(harness["vocab"].id_to_token),
+            "length_ratio": 1.0,
+            **extra,
+        },
+    )
+
+
+def _confirm_test_sentences():
+    return [
+        Sentence(f"test:{offset:04d}", source, reference, split="test")
+        for offset, (_sid, source, reference) in enumerate(SENTENCES, start=140)
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{"trained": False}, {}],
+    ids=["explicit-false", "missing-key"],
+)
+def test_confirm_refuses_untrained_checkpoint_without_override(tmp_path, extra):
+    harness = make_harness()
+    checkpoint = tmp_path / f"untrained-{len(extra)}.pt"
+    _write_checkpoint(checkpoint, harness, extra)
+
+    kwargs = dict(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "confirm"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        checkpoint_path=checkpoint,
+        timer=harness["timer"],
+    )
+    with pytest.raises(ValueError, match="not trained|untrained"):
+        kaggle.run_confirm(**kwargs)
+
+    summary = kaggle.run_confirm(allow_untrained=True, **kwargs)
+    assert summary["trained"] is False
+    assert summary["allow_untrained"] is True
+    assert summary["checkpoint"] == str(checkpoint)
+    assert summary["n_traces"] == 1
+
+
+def test_confirm_on_trained_checkpoint_reports_trained(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    preflight_dir = tmp_path / "preflight"
+    kaggle.run_preflight(
+        limit=3,
+        output_dir=str(preflight_dir),
+        label_states=2,
+        rollout_sentences=1,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=harness["sentences"],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+    payload = torch.load(
+        preflight_dir / "checkpoint.pt", map_location="cpu", weights_only=True
+    )
+    assert payload["extra"]["trained"] is True
+
+    summary = kaggle.run_confirm(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "confirm"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        checkpoint_path=preflight_dir / "checkpoint.pt",
+        timer=harness["timer"],
+    )
+    assert summary["trained"] is True
+    assert summary["allow_untrained"] is False
+    assert summary["n_traces"] == 1

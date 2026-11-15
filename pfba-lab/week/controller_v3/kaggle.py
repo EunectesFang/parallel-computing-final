@@ -1149,7 +1149,10 @@ def _train_and_write(
     training and before each rollout sentence; when it has passed the run stops
     gracefully, sets ``stopped_reason="deadline"``, and still writes the
     partial summary/traces. An existing checkpoint is loaded instead of being
-    overwritten by an untrained network.
+    overwritten by an untrained network. When no checkpoint exists yet, an
+    untrained network is **never** written to disk: the summary records
+    ``trained=False`` and ``checkpoint.status="not_written"``, so a later
+    confirm cannot mistake a file for trained weights.
 
     `model_pair["predictor_id"]` / ``["translator_id"]`` are injected into
     every rollout feature vector so the network embedding and the cost lookup
@@ -1181,14 +1184,21 @@ def _train_and_write(
         "vocab": list(vocab.id_to_token),
         "length_ratio": float(builder.rho),
     }
-    if trained or not checkpoint_path.is_file():
+    if trained:
         metadata = save_checkpoint(
             checkpoint_path, network, cfg, mean, std, cost_model, extra=training_extra
         )
-    else:
+        checkpoint_status = "written"
+    elif checkpoint_path.is_file():
         # Keep the last trained checkpoint rather than overwriting it with an
         # untrained network when this session stopped before training.
         metadata = load_checkpoint(checkpoint_path, network)
+        checkpoint_status = "kept_existing"
+    else:
+        # Never persist an untrained network. A checkpoint file is a promise
+        # that its weights were trained; confirm relies on that promise.
+        metadata = None
+        checkpoint_status = "not_written"
 
     predictor_id = int(model_pair.get("predictor_id", 0))
     translator_id = int(model_pair.get("translator_id", 0))
@@ -1235,7 +1245,11 @@ def _train_and_write(
         "mode": mode,
         "split": split,
         "seed": int(cfg.seed),
-        "git_commit": metadata.get("git_commit"),
+        "git_commit": (
+            metadata.get("git_commit")
+            if metadata is not None
+            else _git_commit()
+        ),
         "model_pair": dict(model_pair),
         "vocab_size": len(vocab),
         "sentences_loaded": len(sentences),
@@ -1246,15 +1260,24 @@ def _train_and_write(
         "training": training,
         "trained": trained,
         "stopped_reason": stopped_reason,
-        "checkpoint": {
-            "path": str(checkpoint_path),
-            "format_version": metadata["format_version"],
-            "seed": metadata["seed"],
-            "git_commit": metadata.get("git_commit"),
-            "feature_mean_len": len(metadata["feature_mean"]),
-            "feature_std_len": len(metadata["feature_std"]),
-            "cost_records": len(metadata["cost_records"]),
-        },
+        "checkpoint": (
+            {
+                "path": str(checkpoint_path),
+                "status": checkpoint_status,
+                "format_version": metadata["format_version"],
+                "seed": metadata["seed"],
+                "git_commit": metadata.get("git_commit"),
+                "feature_mean_len": len(metadata["feature_mean"]),
+                "feature_std_len": len(metadata["feature_std"]),
+                "cost_records": len(metadata["cost_records"]),
+            }
+            if metadata is not None
+            else {
+                "path": None,
+                "status": checkpoint_status,
+                "reason": stopped_reason,
+            }
+        ),
         "cost": cost_summary,
         "rollout": rollout_summary,
         "artifacts": {
@@ -1262,7 +1285,9 @@ def _train_and_write(
             "traces": str(traces_path),
             "config": str(config_path),
             "cost_records": str(cost_path),
-            "checkpoint": str(checkpoint_path),
+            "checkpoint": (
+                str(checkpoint_path) if metadata is not None else None
+            ),
         },
         "notes": list(notes),
     }
@@ -1282,6 +1307,12 @@ def _train_and_write(
         f"COMET={comet.get('status', 'unknown')}",
         flush=True,
     )
+    if checkpoint_status == "not_written":
+        print(
+            "[cavc] no checkpoint written: training was skipped before the "
+            "deadline",
+            flush=True,
+        )
     print(f"[cavc] wrote {summary_path}", flush=True)
     return summary
 
@@ -1673,6 +1704,7 @@ def run_confirm(
     output_dir: str = "outputs/cavc_confirm",
     *,
     allow_consumed: bool = False,
+    allow_untrained: bool = False,
     seed: int = 13,
     predictor=None,
     translator=None,
@@ -1697,9 +1729,14 @@ def run_confirm(
     `checkpoint_path` is supplied, its config, vocabulary, length ratio,
     measured cost records, and weights are reused; the stored vocabulary
     matters because rebuilding one from test sentences would change every
-    text-encoder id. Without a checkpoint an untrained network is evaluated
-    and the summary reports ``trained=False`` so the run cannot be mistaken
-    for a real confirmation.
+    text-encoder id.
+
+    A supplied checkpoint must carry ``extra["trained"] is True``. If it is
+    false or missing, `ValueError` is raised unless `allow_untrained=True` is
+    passed explicitly; either way the summary reports ``trained=False`` rather
+    than claiming the weights were trained. Without a checkpoint an untrained
+    network is evaluated and the summary reports ``trained=False`` so the run
+    cannot be mistaken for a real confirmation.
     """
     offset = int(offset)
     if offset < TEST_OFFSET_FLOOR and not allow_consumed:
@@ -1785,8 +1822,19 @@ def run_confirm(
             network = network or built_network
 
     loaded_metadata = None
+    checkpoint_trained = False
     if checkpoint_path is not None:
         loaded_metadata = load_checkpoint(checkpoint_path, network)
+        checkpoint_trained = bool(
+            (loaded_metadata.get("extra") or {}).get("trained", False)
+        )
+        if not checkpoint_trained and not allow_untrained:
+            raise ValueError(
+                f"checkpoint {checkpoint_path} was not trained "
+                "(extra['trained'] is false or missing). Refusing to present "
+                "untrained weights as a confirmation result; pass "
+                "allow_untrained=True only for a diagnostic run."
+            )
         if cost_model is None and loaded_metadata.get("cost_records"):
             cost_model = MeasuredCostTable(loaded_metadata["cost_records"])
     if cost_model is None:
@@ -1837,8 +1885,9 @@ def run_confirm(
         "offset": offset,
         "limit": int(limit),
         "allow_consumed": bool(allow_consumed),
+        "allow_untrained": bool(allow_untrained),
         "tuned": False,
-        "trained": checkpoint_path is not None,
+        "trained": checkpoint_trained,
         "frozen_config": True,
         "seed": int(cfg.seed),
         "git_commit": (
@@ -1866,11 +1915,11 @@ def run_confirm(
             "No training and no threshold selection happens here.",
             "BLEU/COMET report the status returned by run_pfba.",
             (
-                "No checkpoint was supplied, so an untrained network was "
+                "No trained checkpoint is in use, so untrained weights were "
                 "rolled out; this is not a confirmation result."
-                if checkpoint_path is None
-                else "Weights and measured cost records loaded from the "
-                "checkpoint."
+                if not checkpoint_trained
+                else "Trained weights and measured cost records loaded from "
+                "the checkpoint."
             ),
         ],
     }
@@ -1923,6 +1972,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="outputs/cavc")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--allow-consumed", action="store_true")
+    parser.add_argument(
+        "--allow-untrained",
+        action="store_true",
+        help="confirm mode: evaluate a checkpoint whose extra['trained'] is "
+        "false (diagnostic only)",
+    )
     parser.add_argument("--stride", type=int, default=4)
     parser.add_argument("--max-hours", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=13)
@@ -1983,6 +2038,7 @@ def _dry_run_plan(args) -> dict:
         plan["offset"] = int(args.offset)
         plan["limit"] = int(limit)
         plan["allow_consumed"] = bool(args.allow_consumed)
+        plan["allow_untrained"] = bool(args.allow_untrained)
         plan["checkpoint"] = args.checkpoint
     return plan
 
@@ -2063,6 +2119,7 @@ def main(argv=None) -> int:
             limit=int(limit),
             output_dir=args.output_dir,
             allow_consumed=bool(args.allow_consumed),
+            allow_untrained=bool(args.allow_untrained),
             seed=int(args.seed),
             predictor=predictor,
             translator=translator,
