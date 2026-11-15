@@ -80,6 +80,8 @@ class MeasuredCostTable:
     """Median measured costs keyed by ``(predictor_id, translator_id, action)``.
 
     Records are ``(predictor_id, translator_id, action, pred_s, mt_s)`` tuples.
+    READ records are ignored: READ is always free, and a stored zero-cost row
+    could otherwise win the nearest-action fallback for a write action.
     `src_words` / `tgt_words` are accepted by `predict` for interface parity
     but do not enter the lookup: the table is already conditioned on the model
     pair and action.
@@ -106,6 +108,11 @@ class MeasuredCostTable:
 
         self.records = []
         for predictor_id, translator_id, action, pred_s, mt_s in records:
+            # READ is free by definition. Keeping a zero-cost READ row would
+            # let the nearest-action fallback price a write action at zero, so
+            # READ records never enter the table or the global median.
+            if action.is_read:
+                continue
             key = (int(predictor_id), int(translator_id), action)
             preds, mts = grouped.setdefault(key, ([], []))
             pred = float(pred_s)

@@ -106,6 +106,24 @@ def test_measured_table_read_is_free():
     assert estimate.wall_s == 0.0
 
 
+def test_measured_table_never_uses_read_for_write_fallback():
+    # A stray READ row must not turn a write action into a zero-cost action.
+    only_read = MeasuredCostTable([(0, 0, READ, 0.0, 0.0)])
+    estimate = only_read.predict(0, 0, WRITE, src_words=3, tgt_words=2)
+    assert estimate.pred_s == pytest.approx(MIN_COST_S)
+    assert estimate.mt_s == pytest.approx(MIN_COST_S)
+
+    mixed = MeasuredCostTable(
+        [
+            (0, 0, READ, 0.0, 0.0),
+            (0, 0, Action(8, 10), 0.9, 0.8),
+        ]
+    )
+    nearest = mixed.predict(0, 0, WRITE, src_words=3, tgt_words=2)
+    assert nearest.pred_s == pytest.approx(0.9)  # the write row, not READ
+    assert nearest.mt_s == pytest.approx(0.8)
+
+
 # ----------------------------------------------------------------------
 # Power law
 # ----------------------------------------------------------------------
@@ -146,19 +164,24 @@ def test_power_law_recovers_monotone_exponents():
     assert low.wall_s == pytest.approx(low.pred_s + low.mt_s)
 
 
-def test_power_law_clamps_exponents_to_unit_interval():
-    # A deliberately super-linear generator must not produce an exponent > 1
-    # that would make long horizons look cheaper than they can be.
+def test_power_law_clamps_exponents_that_would_exceed_one():
+    # value = branches^3 exactly. The unclamped least-squares solution is
+    # (r_b=3, r_h=0) for both stages; the model must clamp r_b to 1.
     records = [
-        (0, 0, Action(2, 2), 0.01, 0.01),
-        (0, 0, Action(4, 4), 0.16, 0.16),
-        (0, 0, Action(6, 8), 1.0, 1.0),
-        (0, 0, Action(8, 10), 4.0, 4.0),
+        (0, 0, Action(2, 3), 2.0**3, 2.0**3),
+        (0, 0, Action(3, 2), 3.0**3, 3.0**3),
+        (0, 0, Action(4, 5), 4.0**3, 4.0**3),
+        (0, 0, Action(5, 4), 5.0**3, 5.0**3),
+        (0, 0, Action(6, 7), 6.0**3, 6.0**3),
     ]
     model = PowerLawCostModel(records)
     exponents = model.exponents(0, 0)
     assert exponents is not None
-    assert all(0.0 <= value <= 1.0 for value in exponents)
+    r_b, r_h, s_b, s_h = exponents
+    assert r_b == pytest.approx(1.0)  # clamped down from 3
+    assert s_b == pytest.approx(1.0)  # clamped down from 3
+    assert r_h == pytest.approx(0.0)
+    assert s_h == pytest.approx(0.0)
 
 
 def test_power_law_falls_back_with_fewer_than_four_records():
@@ -221,6 +244,13 @@ def test_pipeline_overlap_beats_serial_sum():
     assert pipeline.marginal_wall(5.0, 5.0, 0.0, 0.0, 0, 0, action, 5, 4) >= 0.0
 
 
+def test_pipeline_predict_read_is_free():
+    pipeline = PipelineCostModel(MeasuredCostTable([(0, 0, Action(2, 4), 0.5, 0.5)]))
+    estimate = pipeline.predict(0, 0, READ, src_words=3, tgt_words=2)
+    assert estimate == CostEstimate(0.0, 0.0, 0.0)
+    assert estimate.wall_s == 0.0
+
+
 # ----------------------------------------------------------------------
 # Runtime
 # ----------------------------------------------------------------------
@@ -273,6 +303,10 @@ def test_execute_no_emit_on_empty_translations():
     assert result.no_emit is True
     assert result.committed_after == ("x",)
     assert result.spent_s == pytest.approx(result.pred_s + result.mt_s)
+    # All-empty candidates are unanimous under split(" "): one "" prefix.
+    assert result.vote_top1 == pytest.approx(1.0)
+    assert result.vote_margin == pytest.approx(1.0)
+    assert result.vote_entropy == pytest.approx(0.0)
     assert committed == ["x"]
 
 
@@ -346,6 +380,43 @@ def test_extend_only_samples_and_translates_new_candidates():
     # Both inputs are untouched and the existing candidates were not retranslated.
     assert current == ["hello world", "hello there"]
     assert committed == ["x"]
+
+
+def test_extend_rejects_non_positive_arguments():
+    runtime, _predictor, _translator = _runtime([])
+    for extra in (0, -1):
+        with pytest.raises(ValueError, match="extra_branches"):
+            runtime.extend("a", [], [], extra, 4, seed=0)
+    for horizon in (0, -2):
+        with pytest.raises(ValueError, match="horizon"):
+            runtime.extend("a", [], [], 2, horizon, seed=0)
+
+
+@pytest.mark.parametrize(
+    "candidates",
+    [
+        ["a  b", "a b"],  # repeated space: one candidate has an extra "" token
+        [" a b", "a b"],  # leading space: an extra leading "" token
+        ["a b ", "a b"],  # trailing space: an extra trailing "" token
+    ],
+)
+def test_vote_statistics_uses_ralcp_space_tokenization(candidates):
+    # split(" ") sees the whitespace difference as a real token, so the pool
+    # splits 1-1 at the decisive depth. A naive split() would call this
+    # unanimous (top1 = 1.0) and report the wrong decisive depth.
+    top1, margin, entropy = vote_statistics(candidates, 0.6)
+    assert top1 == pytest.approx(0.5)
+    assert margin == pytest.approx(0.0)
+    assert entropy == pytest.approx(math.log(2.0))
+
+
+def test_vote_statistics_all_empty_candidates_is_defined():
+    top1, margin, entropy = vote_statistics(["", ""])
+    assert top1 == pytest.approx(1.0)
+    assert margin == pytest.approx(1.0)
+    assert entropy == pytest.approx(0.0)
+
+    assert vote_statistics([]) == (0.0, 0.0, 0.0)
 
 
 def test_vote_statistics_consensus_and_split():

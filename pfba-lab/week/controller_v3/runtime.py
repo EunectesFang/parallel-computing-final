@@ -78,17 +78,23 @@ def vote_statistics(
     """``(top1, margin, entropy)`` over word prefixes at the decisive depth.
 
     The decisive depth is the first word depth where the modal prefix count
-    falls below ``threshold * candidate_count``, or the deepest depth the
-    candidate pool reaches when the threshold never fails. Support is the
-    modal prefix count divided by the original candidate count. Shorter
-    candidates keep contributing their full prefix, matching RALCP. Entropy is
-    Shannon entropy in nats over the support distribution.
+    falls below ``threshold * candidate_count``. When the threshold never
+    fails, the decisive depth is the maximum depth reached by the pool:
+    RALCP iterates to the longest candidate, and ended candidates contribute
+    their full prefix at every later depth. Support is the modal prefix count
+    divided by the original candidate count. Entropy is Shannon entropy in
+    nats over the support distribution.
+
+    Candidates are tokenized with ``text.split(" ")``, exactly as
+    `_local_ralcp` and upstream `run_pfba.upstream_ralcp` do, so repeated,
+    leading, or trailing spaces produce the same depths and support that RALCP
+    voted on.
     """
     original = len(candidates)
     if original == 0:
         return 0.0, 0.0, 0.0
 
-    words = [candidate.split() for candidate in candidates]
+    words = [candidate.split(" ") for candidate in candidates]
     max_depth = max((len(word_list) for word_list in words), default=0)
     decisive_depth = max_depth
     for depth in range(1, max_depth + 1):
@@ -264,40 +270,38 @@ class ControlledRuntime:
         New candidates use seeds ``seed + current_branches + index`` so they
         line up exactly with what a single larger `execute` would have drawn.
         Only the new requests are translated; RALCP then votes over the full
-        pool. `committed` and `current_candidates` are not mutated.
+        pool. `committed` and `current_candidates` are not mutated. Raises
+        `ValueError` unless both `extra_branches` and `horizon` are positive.
         """
         committed_tuple = tuple(committed)
         pool = list(current_candidates)
         extra = int(extra_branches)
-        if extra < 0:
-            raise ValueError("extra_branches must be non-negative")
+        if extra <= 0:
+            raise ValueError("extra_branches must be positive")
+        if int(horizon) <= 0:
+            raise ValueError("extend needs a positive horizon")
 
         pred_s = 0.0
         mt_s = 0.0
-        if extra > 0:
-            if int(horizon) <= 0:
-                raise ValueError("extend needs a positive horizon")
-            base_seed = int(seed) + len(pool)
-            continuations: list[str] = []
-            for index in range(extra):
-                batch, elapsed = self._timed(
-                    "pred",
-                    lambda sample_seed=base_seed + index: self.predictor.sample(
-                        observed, 1, int(horizon), sample_seed
-                    ),
-                )
-                continuations.extend(batch)
-                pred_s += elapsed
+        base_seed = int(seed) + len(pool)
+        continuations: list[str] = []
+        for index in range(extra):
+            batch, elapsed = self._timed(
+                "pred",
+                lambda sample_seed=base_seed + index: self.predictor.sample(
+                    observed, 1, int(horizon), sample_seed
+                ),
+            )
+            continuations.extend(batch)
+            pred_s += elapsed
 
-            requests = [
-                self._request_text(observed, continuation)
-                for continuation in continuations
-            ]
-            if requests:
-                outputs, mt_s = self.translate(
-                    requests, " ".join(committed_tuple)
-                )
-                pool.extend(outputs)
+        requests = [
+            self._request_text(observed, continuation)
+            for continuation in continuations
+        ]
+        if requests:
+            outputs, mt_s = self.translate(requests, " ".join(committed_tuple))
+            pool.extend(outputs)
 
         return self._build_result(
             committed_tuple,
