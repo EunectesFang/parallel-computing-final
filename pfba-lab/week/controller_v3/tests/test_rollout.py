@@ -59,6 +59,27 @@ class FakeNetwork:
         )
 
 
+class EvalRecordingNetwork(FakeNetwork):
+    """Records `self.training` each time `encode` is called."""
+
+    def __init__(self, read_values, write_values):
+        super().__init__(read_values, write_values)
+        self.training = True
+        self.seen_training = []
+
+    def eval(self):
+        self.training = False
+        return self
+
+    def train(self, mode=True):
+        self.training = bool(mode)
+        return self
+
+    def encode(self, numeric, predictor_id, translator_id, src_ids, tgt_ids):
+        self.seen_training.append(self.training)
+        return None
+
+
 class RecordingCost:
     """Fixed wall cost, recording which actions were priced."""
 
@@ -293,6 +314,35 @@ def test_write_then_read_commits_and_flushes_at_eos():
     assert translator.calls[-1] == (["a b c d e f"], "x y x y", True)
 
 
+@pytest.mark.parametrize("baseline", [None, (0, 0)])
+def test_scoring_without_advantage_baseline_or_with_read_baseline(baseline):
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),),
+        advantage_baseline=baseline,
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    network = FakeNetwork(
+        read_values=[-5.0, -5.0, 5.0], write_values={Action(2, 4): 0.0}
+    )
+
+    trace = run_rollout(
+        sentence(source="a b c d e f"),
+        RecordingPredictor("part"),
+        PoolTranslator("x y"),
+        network,
+        FeatureBuilder(),
+        RecordingCost(0.3),
+        cfg,
+        timer=FixedTimer(1.0),
+    )
+
+    assert trace.action_histogram == {"b2h4": 2, "read": 1}
+    assert trace.steps[0]["q_read"] == pytest.approx(-5.0)
+    assert trace.steps[0]["q_write"] == pytest.approx(0.0)
+    assert trace.steps[0]["cost"] == pytest.approx(0.3)
+
+
 # ----------------------------------------------------------------------
 # Rollout: READ path
 # ----------------------------------------------------------------------
@@ -329,21 +379,91 @@ def test_read_path_advances_read_pos_without_touching_the_runtime():
     assert trace.laal is not None
 
 
+def test_rollout_forces_eval_mode_and_restores_the_training_flag():
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),),
+        advantage_baseline=(4, 6),
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    network = EvalRecordingNetwork(read_values=[5.0], write_values={Action(2, 4): 0.0})
+    network.train(True)
+    runtime = ReadOnlyRuntime(final="final")
+
+    trace = run_rollout(
+        sentence(source="a b c d e f", reference="final", sentence_id="eval"),
+        None,
+        None,
+        network,
+        FeatureBuilder(),
+        None,
+        cfg,
+        runtime=runtime,
+    )
+
+    assert trace.committed == ("final",)
+    assert network.seen_training  # encode ran at least once
+    assert all(flag is False for flag in network.seen_training)
+    assert network.training is True  # previous flag restored
+
+
+def test_empty_source_still_flushes_the_eos_translation():
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),),
+        advantage_baseline=(4, 6),
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    network = EvalRecordingNetwork(read_values=[0.0], write_values={Action(2, 4): 0.0})
+    runtime = ReadOnlyRuntime(final="hello world")
+
+    trace = run_rollout(
+        sentence(source="", reference="hello", sentence_id="empty"),
+        None,
+        None,
+        network,
+        FeatureBuilder(),
+        None,
+        cfg,
+        runtime=runtime,
+    )
+
+    assert runtime.execute_calls == 0
+    assert runtime.translate_calls == [([""], "", True)]
+    assert trace.committed == ("hello", "world")
+    assert trace.hypothesis == "hello world"
+    assert trace.completion_s == pytest.approx(0.5)
+    assert trace.delays == (0, 0)
+    assert [step["action"] for step in trace.steps] == ["eos"]
+    assert trace.read_fraction == 0.0
+    assert trace.action_histogram == {}
+    assert trace.laal is not None
+
+
 # ----------------------------------------------------------------------
 # Rollout: post-candidate controller integration
 # ----------------------------------------------------------------------
-def _run_with_post(action: PostAction, runtime: ScriptedRuntime):
-    cfg = ControllerConfig(
+def _run_with_post(
+    action: PostAction,
+    runtime: ScriptedRuntime,
+    *,
+    cfg=None,
+    network=None,
+    source="a b c d e",
+):
+    cfg = cfg or ControllerConfig(
         actions=(Action(2, 4),),
         advantage_baseline=(4, 6),
         max_branches=10,
         min_start=3,
         arrival_gap=0.3,
     )
-    network = FakeNetwork(read_values=[-5.0, 5.0], write_values={Action(2, 4): 0.0})
+    network = network or FakeNetwork(
+        read_values=[-5.0, 5.0], write_values={Action(2, 4): 0.0}
+    )
     post = FixedPostController(action)
     trace = run_rollout(
-        sentence(),
+        sentence(source=source),
         None,
         None,
         network,
@@ -375,10 +495,53 @@ def test_post_controller_add_2_extends_pool_and_commits_final_result():
     assert write_step["post_action"] == "add_2"
     assert write_step["new_words"] == ("chosen",)
     assert write_step["committed_after"] == 1
+    # pred_s / mt_s cover initial execute + extension; spent_s is cumulative.
+    assert write_step["pred_s"] == pytest.approx(0.1 + 0.3)
+    assert write_step["mt_s"] == pytest.approx(0.2 + 0.4)
     assert write_step["spent_s"] == pytest.approx(0.8)
     assert write_step["vote_entropy"] == pytest.approx(0.2)
     assert write_step["vote_margin"] == pytest.approx(0.5)
     assert trace.committed == ("chosen", "eosword")
+
+
+def test_post_controller_add_2_caps_to_one_when_one_slot_remains():
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),),
+        advantage_baseline=(4, 6),
+        max_branches=3,  # two used, one slot left
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    runtime = ScriptedRuntime(provisional_result(), extended_result())
+    trace, _post = _run_with_post(PostAction.ADD_2, runtime, cfg=cfg)
+
+    assert runtime.extend_calls[0]["extra_branches"] == 1
+    assert trace.steps[0]["post_action"] == "add_2"
+    assert trace.committed == ("chosen", "eosword")
+
+
+def test_post_controller_add_2_without_headroom_is_logged_as_noop():
+    cfg = ControllerConfig(
+        actions=(Action(10, 4),),
+        advantage_baseline=(4, 6),
+        max_branches=10,
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    network = FakeNetwork(
+        read_values=[-5.0, 5.0], write_values={Action(10, 4): 0.0}
+    )
+    runtime = ScriptedRuntime(provisional_result())
+
+    trace, _post = _run_with_post(
+        PostAction.ADD_2, runtime, cfg=cfg, network=network
+    )
+
+    assert runtime.extend_calls == []
+    write_step = trace.steps[0]
+    assert write_step["post_action"] == "add_2_noop"
+    assert write_step["new_words"] == ("prov",)
+    assert trace.committed == ("prov", "eosword")
 
 
 def test_post_controller_stop_commits_the_initial_result():
@@ -404,6 +567,10 @@ def test_post_controller_wait_discards_the_provisional_result():
     assert write_step["committed_after"] == 0
     assert write_step["no_emit"] is True
     assert write_step["spent_s"] == pytest.approx(0.3)
+    # The discarded provisional compute still advances the virtual clock:
+    # 0.6s arrival + 0.3s wasted at position 3, then the EOS 1.2s arrival floor
+    # + 0.5s final translation.
+    assert trace.completion_s == pytest.approx(1.7)
     # Only the EOS flush contributes words when the write waited.
     assert trace.committed == ("eosword",)
 
@@ -518,6 +685,16 @@ def test_paired_bootstrap_skips_none_laal_values():
     assert result["point"] == pytest.approx(0.5)
     assert result["low"] == pytest.approx(0.5)
     assert result["high"] == pytest.approx(0.5)
+
+
+def test_paired_bootstrap_uses_the_first_duplicate_on_both_sides():
+    traces_a = [make_trace("s1", 1.0), make_trace("s1", 100.0)]
+    traces_b = [make_trace("s1", 3.0), make_trace("s1", 100.0)]
+
+    result = paired_bootstrap(traces_a, traces_b, "laal", samples=50)
+
+    assert result["n"] == 1
+    assert result["point"] == pytest.approx(-2.0)
 
 
 def test_paired_bootstrap_bleu_raises_when_unavailable(monkeypatch):

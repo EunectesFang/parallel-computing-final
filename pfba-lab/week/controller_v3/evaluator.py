@@ -160,17 +160,27 @@ def summarize_traces(
     }
 
 
+def _first_by_sentence(traces: Sequence) -> dict[str, object]:
+    """Keep the first occurrence of each `sentence_id` in list order."""
+    first: dict[str, object] = {}
+    for trace in traces:
+        first.setdefault(trace.sentence_id, trace)
+    return first
+
+
 def _pair_by_sentence(traces_a: Sequence, traces_b: Sequence):
-    """Pair traces by `sentence_id`, keeping `traces_a` order and uniqueness."""
-    by_id = {trace.sentence_id: trace for trace in traces_b}
+    """Pair traces by `sentence_id`, keeping the first occurrence on each side.
+
+    Pairs follow `traces_a` order and only include ids present in both lists.
+    Later duplicates of the same id in either arm are ignored, so both arms use
+    the same occurrence policy.
+    """
+    by_id = _first_by_sentence(traces_b)
     pairs = []
-    seen: set[str] = set()
-    for trace in traces_a:
+    for trace in _first_by_sentence(traces_a).values():
         sentence_id = trace.sentence_id
-        if sentence_id in seen or sentence_id not in by_id:
-            continue
-        seen.add(sentence_id)
-        pairs.append((trace, by_id[sentence_id]))
+        if sentence_id in by_id:
+            pairs.append((trace, by_id[sentence_id]))
     return pairs
 
 

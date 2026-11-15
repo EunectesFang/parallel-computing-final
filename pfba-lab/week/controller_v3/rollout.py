@@ -60,7 +60,11 @@ class RolloutTrace:
     new_words, pred_s, mt_s, spent_s, vote_top1, vote_margin, vote_entropy,
     no_emit, q_read, q_write, cost, post_action``.
     `committed_before` / `committed_after` are word counts; `new_words` is the
-    tuple of words this step added.
+    tuple of words this step added. For a write step, `pred_s` / `mt_s` are the
+    full decision's measured compute (initial execute plus any ADD_2
+    extension), `spent_s` is the cumulative measured compute billed to the
+    virtual clock, and discarded WAIT work appears in `spent_s` but not in the
+    committed words.
     """
 
     sentence_id: str
@@ -279,7 +283,51 @@ def run_rollout(
     when supplied, must expose
     ``decide(z_pre, current_branches, horizon, vote_entropy, vote_margin,
     no_emit_prob, spent_s, cfg) -> PostDecision``.
+
+    The network is forced into eval mode for scoring (its Dropout would
+    otherwise make Q values stochastic and non-reproducible) and the previous
+    training flag is restored in a `finally`, even when the rollout raises.
     """
+    can_eval = callable(getattr(network, "eval", None))
+    was_training = getattr(network, "training", None)
+    if can_eval:
+        network.eval()
+    try:
+        return _run_rollout_impl(
+            sentence,
+            predictor,
+            translator,
+            network,
+            builder,
+            cost_model,
+            cfg,
+            timer,
+            runtime=runtime,
+            post_controller=post_controller,
+        )
+    finally:
+        if (
+            can_eval
+            and was_training is not None
+            and callable(getattr(network, "train", None))
+        ):
+            network.train(bool(was_training))
+
+
+def _run_rollout_impl(
+    sentence,
+    predictor,
+    translator,
+    network,
+    builder,
+    cost_model,
+    cfg: ControllerConfig,
+    timer=None,
+    *,
+    runtime=None,
+    post_controller=None,
+) -> RolloutTrace:
+    """Body of `run_rollout`; assumes the network is already in eval mode."""
     cfg = cfg if cfg is not None else ControllerConfig()
     source = str(_field(sentence, "source", ""))
     reference = str(_field(sentence, "reference", ""))
@@ -288,20 +336,6 @@ def run_rollout(
 
     words = source.split()
     source_len = len(words)
-    if source_len == 0:
-        return RolloutTrace(
-            sentence_id=sentence_id,
-            source=source,
-            reference=reference,
-            hypothesis="",
-            committed=(),
-            delays=(),
-            laal=None,
-            completion_s=0.0,
-            read_fraction=0.0,
-            action_histogram={},
-            steps=(),
-        )
 
     runtime = runtime or ControlledRuntime(predictor, translator, cfg, timer=timer)
     builder = builder if builder is not None else FeatureBuilder()
@@ -526,6 +560,10 @@ def run_rollout(
                         seed,
                         spent_s=provisional.spent_s,
                     )
+                else:
+                    # No branch headroom: the proposal was a no-op, so do not
+                    # mislabel the committed provisional result as "add_2".
+                    post_action = "add_2_noop"
             elif decision.action is PostAction.WAIT:
                 final = None
 
@@ -550,6 +588,17 @@ def run_rollout(
             delays.extend([read_pos] * len(new_words))
             vote_source = final
 
+        # `StepResult.pred_s` / `mt_s` from `extend` cover only the extension,
+        # while `spent_s` is already cumulative. Report the whole decision's
+        # measured compute so pred_s + mt_s + discarded WAIT work explain the
+        # virtual clock without double-counting `spent_s`.
+        if final is None or final is provisional:
+            step_pred_s = provisional.pred_s
+            step_mt_s = provisional.mt_s
+        else:
+            step_pred_s = provisional.pred_s + final.pred_s
+            step_mt_s = provisional.mt_s + final.mt_s
+
         steps.append(
             _write_step(
                 read_pos=read_pos,
@@ -558,8 +607,8 @@ def run_rollout(
                 committed_before=committed_before,
                 committed_after=len(committed),
                 new_words=new_words,
-                pred_s=vote_source.pred_s,
-                mt_s=vote_source.mt_s,
+                pred_s=step_pred_s,
+                mt_s=step_mt_s,
                 spent_s=spent,
                 vote_top1=vote_source.vote_top1,
                 vote_margin=vote_source.vote_margin,
