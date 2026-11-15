@@ -86,6 +86,22 @@ def test_model_ids_outside_the_embedding_table_are_clamped():
     assert torch.allclose(z_raw, z_clamped)
 
 
+def test_empty_action_list_returns_independent_empty_tensors():
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)
+    outputs = network.write_values(torch.randn(3, cfg.value_hidden), [])
+    for tensor in (
+        outputs.value,
+        outputs.error_risk,
+        outputs.no_emit,
+        outputs.expected_emit,
+    ):
+        assert tensor.shape == (3, 0)
+    assert outputs.value is not outputs.error_risk
+    assert outputs.error_risk is not outputs.no_emit
+    assert outputs.no_emit is not outputs.expected_emit
+
+
 def test_expected_emit_is_softplus_of_the_raw_head_once():
     cfg = ControllerConfig()
     network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)

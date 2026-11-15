@@ -143,8 +143,13 @@ class CAVCNetwork(nn.Module):
         actions = list(actions)
         batch = z.size(0)
         if not actions:
-            empty = z.new_zeros(batch, 0)
-            return WriteOutputs(empty, empty, empty, empty)
+            # Independent tensors so callers cannot alias one field onto another.
+            return WriteOutputs(
+                value=z.new_zeros(batch, 0),
+                error_risk=z.new_zeros(batch, 0),
+                no_emit=z.new_zeros(batch, 0),
+                expected_emit=z.new_zeros(batch, 0),
+            )
 
         features = torch.tensor(
             [action_features(action, self.cfg.ralcp_threshold) for action in actions],

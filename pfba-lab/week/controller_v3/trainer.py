@@ -21,7 +21,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .action import Action
+from .action import READ, Action
 from .config import ControllerConfig
 from .features import NUMERIC_FEATURES, StateInput
 from .network import CAVCNetwork, WriteOutputs
@@ -53,6 +53,9 @@ class ActionTarget:
     error_target: float
     no_emit_target: float
     emit_target: float
+    # Stable identity of `state` used to group actions for the ranking loss.
+    # Production callers must always pass a non-empty key; the empty default is
+    # for ad-hoc tests only, because empty keys intentionally disable ranking.
     state_key: str
     next_state: StateInput | None = None
     next_actions: tuple[Action, ...] = ()
@@ -168,7 +171,9 @@ class CAVCTrainer:
                     results.append(float(target.value_target))
                     continue
 
-                actions = tuple(target.next_actions) or tuple(self.cfg.actions)
+                # READ is a first-class action, so the default backup set must
+                # include it; omitting READ biases the target toward writing.
+                actions = tuple(target.next_actions) or (READ, *self.cfg.actions)
                 bonus = self._best_next_value(target.next_state, actions)
                 results.append(float(target.value_target) + self.cfg.gamma * bonus)
         return results
@@ -335,6 +340,7 @@ class CAVCTrainer:
                 write_actions.append(action)
 
         write_outputs: WriteOutputs | None = None
+        column: dict[Action, int] = {}
         gathered = read_values[unique_index]
         if write_actions:
             write_outputs = self.network.write_values(z, write_actions)
@@ -370,12 +376,7 @@ class CAVCTrainer:
         if write_outputs is not None and write_rows:
             rows = torch.tensor(write_rows, dtype=torch.long)
             columns = torch.tensor(
-                [
-                    {action: index for index, action in enumerate(write_actions)}[
-                        actions[index]
-                    ]
-                    for index in write_rows
-                ],
+                [column[actions[index]] for index in write_rows],
                 dtype=torch.long,
             )
             rows_in_states = unique_index[rows]
@@ -429,6 +430,9 @@ class CAVCTrainer:
         model: CAVCNetwork,
         states: Sequence[StateInput],
     ) -> torch.Tensor:
+        if not states:
+            # Keep the batch dimension so callers can index into the result.
+            return torch.zeros((0, self.cfg.value_hidden), dtype=torch.float32)
         numeric = torch.tensor([state.numeric for state in states], dtype=torch.float32)
         predictor_id = torch.tensor(
             [state.predictor_id for state in states], dtype=torch.long

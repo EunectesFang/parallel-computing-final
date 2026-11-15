@@ -9,7 +9,7 @@ import torch
 from controller_v3.action import READ, Action
 from controller_v3.config import ControllerConfig
 from controller_v3.features import NUMERIC_FEATURES, StateInput
-from controller_v3.network import CAVCNetwork
+from controller_v3.network import CAVCNetwork, WriteOutputs
 from controller_v3.trainer import (
     ActionTarget,
     CAVCTrainer,
@@ -124,6 +124,70 @@ def test_non_terminal_target_adds_discounted_next_state_value():
         assert actual == pytest.approx(expected, rel=1e-5, abs=1e-5)
         # READ is not in the candidate set here, but the head still exists.
         assert torch.isfinite(torch.tensor(read_value))
+
+
+def _stub_heads(monkeypatch, trainer, *, read_value: float, write_value: float):
+    """Force the target network's READ head above (or below) every write head."""
+
+    def fake_read_value(z):
+        return torch.full((z.size(0),), read_value)
+
+    def fake_write_values(z, actions):
+        batch, count = z.size(0), len(actions)
+        zeros = torch.zeros(batch, count)
+        return WriteOutputs(
+            value=torch.full((batch, count), write_value),
+            error_risk=zeros,
+            no_emit=zeros,
+            expected_emit=zeros + 0.5,
+        )
+
+    monkeypatch.setattr(trainer.target_network, "read_value", fake_read_value)
+    monkeypatch.setattr(trainer.target_network, "write_values", fake_write_values)
+
+
+def _bootstrap_target(next_actions=()):
+    return ActionTarget(
+        state=make_state(0),
+        action=ACTIONS[0],
+        value_target=0.0,
+        error_target=0.0,
+        no_emit_target=0.0,
+        emit_target=0.0,
+        state_key="s0",
+        next_state=make_state(1, src_words=6, tgt_words=4),
+        next_actions=next_actions,
+        terminal=False,
+    )
+
+
+def test_default_bootstrap_candidates_include_read(monkeypatch):
+    trainer, cfg, _ = make_trainer()
+    _stub_heads(monkeypatch, trainer, read_value=10.0, write_value=-10.0)
+
+    computed = trainer.compute_targets([_bootstrap_target()])
+
+    # FakeCostModel charges 0.25 for READ; every write costs strictly more.
+    expected = cfg.gamma * (10.0 - cfg.lambda_t * 0.25)
+    assert computed[0] == pytest.approx(expected)
+
+
+def test_explicit_next_actions_override_the_default_candidate_set(monkeypatch):
+    trainer, cfg, _ = make_trainer()
+    _stub_heads(monkeypatch, trainer, read_value=10.0, write_value=1.0)
+
+    computed = trainer.compute_targets([_bootstrap_target(next_actions=(ACTIONS[0],))])
+
+    # READ is available in the backup set but NOT when next_actions is supplied.
+    write_cost = 0.25 * (1 + ACTIONS[0].branches + ACTIONS[0].horizon)
+    expected = cfg.gamma * (1.0 - cfg.lambda_t * write_cost)
+    assert computed[0] == pytest.approx(expected)
+
+
+def test_encode_states_with_no_states_returns_an_empty_batch():
+    trainer, cfg, network = make_trainer()
+    encoded = trainer._encode_states(network, [])
+    assert encoded.shape == (0, cfg.value_hidden)
 
 
 def test_cost_model_is_queried_with_src_and_tgt_words():
