@@ -13,7 +13,10 @@ Label construction mirrors `week/week_run.py::label_step` while sharing the
 pool across actions:
 
 1. Sample one nested pool of ``max(branches) x max(horizon)`` token rows with a
-   single seed, so B=2 is exactly the first two rows of B=4.
+   single seed, so B=2 is exactly the first two rows of B=4. Unlike
+   ``week_run.py::label_step`` this path deliberately does **not** call
+   ``shuffle_rows``: the brief mandates first-b nested candidates, and a shuffle
+   would make the branch subsets depend on the maximum pool size.
 2. For every distinct horizon, take the first ``max(branches)`` rows for that
    horizon, truncate each row to the horizon, decode it, and translate the
    resulting requests in **one** batch with the committed prefix forced.
@@ -33,7 +36,6 @@ fresh tuple.
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -241,7 +243,7 @@ class CounterfactualLabeler:
         `timer.seconds` as well.
         """
         prefix = " ".join(tuple(committed))
-        outputs, _seconds = self._timed(
+        outputs, _seconds = self.runtime._timed(
             "oracle", lambda: self._translate_raw([source], prefix)
         )
         text = outputs[0] if outputs else ""
@@ -291,7 +293,7 @@ class CounterfactualLabeler:
             max_b = max(int(action.branches) for action in write_actions)
             max_h = max(int(action.horizon) for action in write_actions)
 
-            rows, pred_s = self._timed(
+            rows, pred_s = self.runtime._timed(
                 "pred",
                 lambda: self.sample_candidates(observed, max_b, max_h, seed),
             )
@@ -374,16 +376,8 @@ class CounterfactualLabeler:
             return list(run_pfba.call_translate_batch(self.translator, sources, prefix))
         return list(self.translator.translate_batch(sources, prefix))
 
-    def _timed(self, name: str, function):
-        runner = getattr(self.timer, "run", None)
-        if callable(runner):
-            return runner(name, function)
-        start = time.perf_counter()
-        value = function()
-        return value, max(0.0, time.perf_counter() - start)
-
     def _decode_tokens(self, token_ids: Sequence[int], horizon: int) -> str:
-        """Truncate one token row to `horizon` words and decode it."""
+        """Truncate one token row to `horizon` tokens and decode it."""
         tok = getattr(self.predictor, "tok", None)
         if tok is None:
             raise RuntimeError(
