@@ -39,11 +39,12 @@ import math
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Sequence
 
 from .action import READ, Action
 from .config import ControllerConfig
-from .features import FeatureBuilder, History, RuntimeInfo
+from .features import FeatureBuilder, HistoryTracker
 from .post_controller import ADD_2_BRANCHES, PostAction
 from .runtime import ControlledRuntime, StepResult, run_pfba
 
@@ -368,9 +369,9 @@ def _run_rollout_impl(
     committed: tuple[str, ...] = ()
     delays: list[int] = []
     steps: list[dict] = []
-    history = History()
+    # One state-update implementation shared with the offline label path.
+    tracker = HistoryTracker()
     completion_s = 0.0
-    last_commit_s = 0.0
 
     # Every decision advances one source position, so a normal run needs at
     # most `source_len - min_start + 2` iterations. The generous cap is a
@@ -429,14 +430,10 @@ def _run_rollout_impl(
         # Decision point.
         # --------------------------------------------------------------
         observed = " ".join(words[:read_pos])
-        runtime_info = RuntimeInfo(
-            time_since_commit=max(0.0, completion_s - last_commit_s)
-        )
-        vector = builder.build(
+        vector = tracker.build(
+            builder,
             observed,
             committed,
-            history=history,
-            runtime=runtime_info,
             predictor_id=int(predictor_id),
             translator_id=int(translator_id),
         )
@@ -518,18 +515,8 @@ def _run_rollout_impl(
                     post_action=None,
                 )
             )
+            tracker.on_read(now_s=completion_s)
             read_pos += 1
-            history = History(
-                last_branches=history.last_branches,
-                last_horizon=history.last_horizon,
-                last_vote_top1=history.last_vote_top1,
-                last_vote_margin=history.last_vote_margin,
-                last_vote_entropy=history.last_vote_entropy,
-                last_commit_count=0,
-                last_empty=True,
-                words_since_commit=history.words_since_commit + 1,
-                no_emit_streak=history.no_emit_streak + 1,
-            )
             continue
 
         # --------------------------------------------------------------
@@ -635,31 +622,17 @@ def _run_rollout_impl(
             )
         )
 
-        if new_words:
-            last_commit_s = completion_s
-            history = History(
-                last_branches=used_branches,
-                last_horizon=chosen.horizon,
-                last_vote_top1=vote_source.vote_top1,
-                last_vote_margin=vote_source.vote_margin,
-                last_vote_entropy=vote_source.vote_entropy,
-                last_commit_count=len(new_words),
-                last_empty=False,
-                words_since_commit=0,
-                no_emit_streak=0,
-            )
-        else:
-            history = History(
-                last_branches=used_branches,
-                last_horizon=chosen.horizon,
-                last_vote_top1=vote_source.vote_top1,
-                last_vote_margin=vote_source.vote_margin,
-                last_vote_entropy=vote_source.vote_entropy,
-                last_commit_count=0,
-                last_empty=True,
-                words_since_commit=history.words_since_commit + 1,
-                no_emit_streak=history.no_emit_streak + 1,
-            )
+        tracker.on_write(
+            SimpleNamespace(
+                action=Action(used_branches, chosen.horizon),
+                emitted=len(new_words),
+                no_emit=not new_words,
+                vote_top1=vote_source.vote_top1,
+                vote_margin=vote_source.vote_margin,
+                vote_entropy=vote_source.vote_entropy,
+            ),
+            now_s=completion_s,
+        )
 
         # One decision per source position, exactly like `week_run.rollout`:
         # the next source word arrives during this step whether or not the

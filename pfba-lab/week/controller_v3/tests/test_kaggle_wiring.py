@@ -461,23 +461,49 @@ def test_run_confirm_accepts_clean_offset_by_default(tmp_path):
 # ----------------------------------------------------------------------
 # Labeling
 # ----------------------------------------------------------------------
-def test_label_sentence_labels_only_kept_positions_and_omits_candidates():
+def test_label_sentence_labels_every_one_step_position_and_omits_candidates():
     harness = make_harness()
     cfg = harness["cfg"]
     sentence = harness["sentences"][0]
-    row = kaggle.label_sentence(harness["labeler"], sentence, stride=2, cfg=cfg)
+    row = kaggle.label_sentence(harness["labeler"], sentence, stride=1, cfg=cfg)
 
     positions = list(range(cfg.min_start, len(sentence.source.split())))
-    assert [state["read_pos"] for state in row["states"]] == positions[::2]
-    for state in row["states"]:
+    assert [state["read_pos"] for state in row["states"]] == positions
+    assert row["stride"] == 1
+    assert row["label_format"] == kaggle.LABEL_FORMAT
+    assert row["behavior"]["read_prob"] == pytest.approx(0.25)
+    assert row["behavior"]["fixed_action"] == "b4h6"
+    for index, state in enumerate(row["states"]):
         assert state["outcomes"][0]["action"] == READ.label
         assert state["oracle_words"] >= 0
         # Candidate text is omitted from the persisted row.
         assert "candidates" not in json.dumps(state)
-        # The committed prefix only ever grows by appended words.
+        assert state["successor_observed"].split() == (
+            state["observed"].split() + [sentence.source.split()[state["read_pos"]]]
+        )
+        # Every outcome persists compact successor inputs: the successor
+        # observed prefix is shared, and each action stores its own committed
+        # prefix and emitted count.
         before = state["committed_before"]
+        for outcome in state["outcomes"]:
+            assert "next_committed" in outcome
+            assert outcome["next_committed"][: len(before)] == before
+            assert outcome["emitted"] == len(outcome["next_committed"]) - len(before)
+        # The committed prefix only ever grows by appended words.
         after = state["committed_after"]
         assert after[: len(before)] == before
+        # Only the final state is terminal.
+        assert state["terminal"] is (index == len(row["states"]) - 1)
+        if state["terminal"]:
+            assert state["terminal_value"] is not None
+
+
+def test_label_sentence_raises_for_multi_step_stride():
+    harness = make_harness()
+    cfg = harness["cfg"]
+    sentence = harness["sentences"][0]
+    with pytest.raises(ValueError, match="one-step|stride"):
+        kaggle.label_sentence(harness["labeler"], sentence, stride=2, cfg=cfg)
 
 
 def test_label_sentence_refuses_test_and_holdout_sentences():
@@ -487,7 +513,7 @@ def test_label_sentence_refuses_test_and_holdout_sentences():
         kaggle.label_sentence(
             harness["labeler"],
             Sentence("test:0140", "hallo welt wir lernen heute .", "x"),
-            2,
+            1,
             cfg,
         )
     # dev:0009 hashes into holdout bucket 1.
@@ -495,7 +521,7 @@ def test_label_sentence_refuses_test_and_holdout_sentences():
         kaggle.label_sentence(
             harness["labeler"],
             Sentence("dev:0009", "hallo welt wir lernen heute .", "x"),
-            2,
+            1,
             cfg,
         )
 
@@ -518,7 +544,7 @@ def test_run_dev_excludes_holdout_and_resumes_by_sentence_id(tmp_path):
     def run():
         return kaggle.run_dev(
             limit=0,
-            stride=2,
+            stride=1,
             output_dir=str(tmp_path),
             max_hours=1.0,
             seed=cfg.seed,
@@ -824,7 +850,7 @@ class StubLabeler:
         return outcomes
 
 
-def test_label_sentence_chooses_max_reward_write_with_bh_tie_break():
+def test_label_sentence_behavior_policy_can_choose_read():
     cfg = ControllerConfig(
         seed=7,
         actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
@@ -832,19 +858,66 @@ def test_label_sentence_chooses_max_reward_write_with_bh_tie_break():
     sentence = Sentence(
         "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
     )
-    row = kaggle.label_sentence(StubLabeler(), sentence, stride=100, cfg=cfg)
+    row = kaggle.label_sentence(
+        StubLabeler(), sentence, stride=1, cfg=cfg, read_prob=1.0
+    )
 
-    assert len(row["states"]) == 1
-    state = row["states"][0]
-    # b2h4 and b2h6 both have matched=2; b4h6 has matched=1. The tie goes to
-    # the smaller b*h (8 for b2h4 vs 12 for b2h6).
-    assert state["chosen"] == "b2h4"
-    assert state["committed_after"] == ["a", "b"]
+    assert row["behavior"] == {"read_prob": 1.0, "fixed_action": "b4h6"}
+    assert [state["chosen"] for state in row["states"]] == [
+        READ.label for _ in row["states"]
+    ]
+    # READ keeps the committed prefix at every state.
+    assert all(
+        state["committed_before"] == state["committed_after"]
+        for state in row["states"]
+    )
+    # The Bellman target still sees every write outcome; the behavior policy
+    # only chooses which committed prefix becomes the next training state.
+    assert {
+        outcome["action"] for outcome in row["states"][0]["outcomes"]
+    } == {"read", "b2h4", "b2h6", "b4h6"}
+
+
+def test_label_sentence_behavior_policy_uses_the_fixed_write():
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
+    )
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+    row = kaggle.label_sentence(
+        StubLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
+
+    assert {state["chosen"] for state in row["states"]} == {"b4h6"}
+    # StubLabeler's b4h6 emits ("c",), so the trajectory keeps growing.
+    assert row["states"][0]["committed_after"] == ["c"]
+    assert row["states"][1]["committed_before"] == ["c"]
+
+
+def test_label_sentence_rewards_reflect_post_action_backlog():
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
+    )
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+    row = kaggle.label_sentence(
+        StubLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
     rewards = {
-        outcome["action"]: outcome["reward"] for outcome in state["outcomes"]
+        outcome["action"]: outcome["reward"]
+        for outcome in row["states"][0]["outcomes"]
     }
-    assert rewards["b2h4"] == pytest.approx(rewards["b2h6"])
-    assert rewards["b2h4"] > rewards["b4h6"]
+    # b2h6 commits three words, b2h4 commits two, so b2h6 closes more of the
+    # post-action backlog and earns a strictly better delay-adjusted reward.
+    assert rewards["b2h6"] > rewards["b2h4"]
+    # b4h6 matches only one word and emits one.
+    assert rewards["b4h6"] < rewards["b2h4"]
+    # READ emits nothing, so its post-action backlog is largest.
+    assert rewards["read"] < rewards["b4h6"]
 
 
 def test_run_dev_stops_gracefully_when_deadline_has_passed(tmp_path):
@@ -854,7 +927,7 @@ def test_run_dev_stops_gracefully_when_deadline_has_passed(tmp_path):
     def run(max_hours):
         return kaggle.run_dev(
             limit=0,
-            stride=2,
+            stride=1,
             output_dir=str(tmp_path),
             max_hours=max_hours,
             seed=cfg.seed,
@@ -895,7 +968,7 @@ def test_run_dev_builds_vocab_from_train_buckets_only(tmp_path):
     )
     summary = kaggle.run_dev(
         limit=0,
-        stride=2,
+        stride=1,
         output_dir=str(tmp_path),
         max_hours=1.0,
         seed=cfg.seed,
@@ -934,7 +1007,7 @@ def test_run_dev_and_preflight_reject_test_sentences(tmp_path):
     with pytest.raises(ValueError, match="test"):
         kaggle.run_dev(
             limit=0,
-            stride=2,
+            stride=1,
             output_dir=str(tmp_path / "dev"),
             max_hours=1.0,
             **common,
@@ -988,7 +1061,7 @@ def test_deadline_skip_without_prior_checkpoint_writes_no_checkpoint(tmp_path):
     def run(max_hours):
         return kaggle.run_dev(
             limit=0,
-            stride=2,
+            stride=1,
             output_dir=str(tmp_path),
             max_hours=max_hours,
             seed=cfg.seed,

@@ -162,10 +162,38 @@ class CAVCTrainer:
     # Target computation
     # ------------------------------------------------------------------
     def compute_targets(self, targets: Sequence[ActionTarget]) -> list[float]:
-        """Return one-step Bellman targets in the same order as `targets`."""
+        """Return one-step Bellman targets in the same order as `targets`.
+
+        Each row bootstraps from *its own* `next_state`, so READ and two
+        different writes from the same state receive different targets. Rows
+        with no successor or a terminal row use `value_target` only.
+
+        The backup is cached per unique ``(next_state, next_actions)`` within a
+        call, and all unique successor states are encoded in one batch. Without
+        this, a state's ten counterfactual action rows would each re-run the
+        frozen network over the same successor.
+        """
         self.target_network.eval()
         results: list[float] = []
+
+        # Collect unique successors so they can be encoded in one batch.
+        unique_states: list[StateInput] = []
+        state_index: dict[StateInput, int] = {}
+        for target in targets:
+            if target.next_state is None or target.terminal:
+                continue
+            state = target.next_state
+            if state not in state_index:
+                state_index[state] = len(unique_states)
+                unique_states.append(state)
+
         with torch.no_grad():
+            encoded = (
+                self._encode_states(self.target_network, unique_states)
+                if unique_states
+                else None
+            )
+            cache: dict[tuple[StateInput, tuple[Action, ...]], float] = {}
             for target in targets:
                 if target.next_state is None or target.terminal:
                     results.append(float(target.value_target))
@@ -174,7 +202,14 @@ class CAVCTrainer:
                 # READ is a first-class action, so the default backup set must
                 # include it; omitting READ biases the target toward writing.
                 actions = tuple(target.next_actions) or (READ, *self.cfg.actions)
-                bonus = self._best_next_value(target.next_state, actions)
+                lookup = (target.next_state, actions)
+                bonus = cache.get(lookup)
+                if bonus is None:
+                    row = state_index[target.next_state]
+                    bonus = self._best_next_value_from_z(
+                        encoded[row : row + 1], target.next_state, actions
+                    )
+                    cache[lookup] = bonus
                 results.append(float(target.value_target) + self.cfg.gamma * bonus)
         return results
 
@@ -183,6 +218,17 @@ class CAVCTrainer:
         if not actions:
             return 0.0
         z = self._encode_states(self.target_network, [state])
+        return self._best_next_value_from_z(z, state, actions)
+
+    def _best_next_value_from_z(
+        self,
+        z: torch.Tensor,
+        state: StateInput,
+        actions: Sequence[Action],
+    ) -> float:
+        """Backup value from an already-encoded one-row successor `z`."""
+        if not actions:
+            return 0.0
         values = self._q_values(self.target_network, z, actions)
         best = max(
             float(value) - self.cfg.lambda_t * self._cost(state, action)
@@ -298,7 +344,9 @@ class CAVCTrainer:
 
         final = self.history[-1]
         return {
-            "epochs": epochs,
+            # Report the epochs that actually ran rather than echoing the
+            # configured value; the zero-epoch path returns 0 above.
+            "epochs": len(self.history),
             "final_loss": final["total"],
             "value_loss": final["value"],
             "rank_loss": final["rank"],

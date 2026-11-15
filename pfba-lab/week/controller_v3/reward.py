@@ -72,11 +72,24 @@ def immediate_reward(
     )
 
 
-def terminal_reward(hypothesis: str, reference: str, cfg: RewardConfig) -> float:
+def terminal_reward(
+    hypothesis: str,
+    reference: str,
+    cfg: RewardConfig,
+    *,
+    backlog: float = 0.0,
+    source_advance: float = 0.0,
+) -> float:
     """Negative absolute word-count difference between hypothesis and reference.
 
-    This is an intentionally simple terminal proxy, not COMET. `cfg` is part of
-    the shared contract so a future weighted terminal metric can be introduced
-    without changing callers; the current definition does not use it.
+    This is an intentionally simple terminal proxy, not COMET or BLEU. An
+    optional delay term is available for a caller that wants the last state to
+    price any remaining source lead; the defaults disable it so the historical
+    length-only behaviour is unchanged. `cfg` is part of the shared contract so
+    a future weighted terminal metric can be introduced without changing
+    callers.
     """
-    return -float(abs(len(hypothesis.split()) - len(reference.split())))
+    length_gap = -float(
+        abs(len(hypothesis.split()) - len(reference.split()))
+    )
+    return length_gap - delay_penalty(backlog, source_advance, cfg)

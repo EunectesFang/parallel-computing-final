@@ -13,7 +13,7 @@ oracle continuation, or future words. Training labels are built in
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Sequence
 
 __all__ = [
@@ -28,6 +28,7 @@ __all__ = [
     "FeatureVector",
     "StateInput",
     "FeatureBuilder",
+    "HistoryTracker",
     "estimate_length_ratio",
 ]
 
@@ -293,6 +294,148 @@ class FeatureBuilder:
             src_ids=src_ids,
             tgt_ids=tgt_ids,
         )
+
+
+class HistoryTracker:
+    """The single state-update implementation shared by labeling and rollout.
+
+    One tracker holds the `History` and `RuntimeInfo` for the *current* decision
+    point. Call `on_read` or `on_write` once per decision to advance it to the
+    successor, then `build` the online `FeatureVector` for that successor. Using
+    the same class on the offline label path and the online rollout path is what
+    makes the History features identical in training and serving; previously
+    training used a default all-zero `History` while serving used live values.
+
+    `last_commit_s` and `now_s` are the virtual clock used for the
+    `time_since_commit` runtime feature. `now_s` is the clock at the decision
+    (or at the just-completed action when `on_*` is called); a committed write
+    resets `last_commit_s` to `now_s`.
+
+    READ leaves the vote statistics untouched because no vote happened; it
+    zeroes the branch/horizon slots as the brief requires and increments both
+    the words-since-commit and no-emit streak counters.
+    """
+
+    def __init__(
+        self,
+        history: History | None = None,
+        runtime: RuntimeInfo | None = None,
+        last_commit_s: float = 0.0,
+        now_s: float = 0.0,
+    ) -> None:
+        self.history = history if history is not None else History()
+        self.runtime = runtime if runtime is not None else RuntimeInfo()
+        self.last_commit_s = float(last_commit_s)
+        self.now_s = float(now_s)
+
+    def clone(self) -> "HistoryTracker":
+        """Return an independent copy so one transition cannot affect another."""
+        return HistoryTracker(
+            history=self.history,
+            runtime=self.runtime,
+            last_commit_s=self.last_commit_s,
+            now_s=self.now_s,
+        )
+
+    # ------------------------------------------------------------------
+    # Transitions
+    # ------------------------------------------------------------------
+    def on_read(self, now_s: float | None = None) -> History:
+        """Advance over a READ: one more observed source word, no commit."""
+        if now_s is not None:
+            self.now_s = float(now_s)
+        previous = self.history
+        self.history = History(
+            last_branches=0,
+            last_horizon=0,
+            last_vote_top1=previous.last_vote_top1,
+            last_vote_margin=previous.last_vote_margin,
+            last_vote_entropy=previous.last_vote_entropy,
+            last_commit_count=0,
+            last_empty=True,
+            words_since_commit=previous.words_since_commit + 1,
+            no_emit_streak=previous.no_emit_streak + 1,
+        )
+        self._refresh_runtime()
+        return self.history
+
+    def on_write(self, outcome, now_s: float | None = None) -> History:
+        """Advance over a WRITE using an `ActionOutcome`-like object.
+
+        The object must expose ``action``, ``emitted``, ``no_emit``,
+        ``vote_top1``, ``vote_margin``, and ``vote_entropy``. A commit
+        (``emitted > 0``) resets both lag counters and the commit clock; a
+        no-emit write increments them, exactly like READ.
+        """
+        if now_s is not None:
+            self.now_s = float(now_s)
+        action = outcome.action
+        emitted = int(outcome.emitted)
+        no_emit = bool(outcome.no_emit)
+        previous = self.history
+        if emitted > 0:
+            words_since_commit = 0
+            no_emit_streak = 0
+        else:
+            words_since_commit = previous.words_since_commit + 1
+            no_emit_streak = previous.no_emit_streak + 1
+        self.history = History(
+            last_branches=int(action.branches),
+            last_horizon=int(action.horizon),
+            last_vote_top1=float(outcome.vote_top1),
+            last_vote_margin=float(outcome.vote_margin),
+            last_vote_entropy=float(outcome.vote_entropy),
+            last_commit_count=emitted,
+            last_empty=no_emit,
+            words_since_commit=words_since_commit,
+            no_emit_streak=no_emit_streak,
+        )
+        if emitted > 0:
+            self.last_commit_s = self.now_s
+        self._refresh_runtime()
+        return self.history
+
+    def set_clock(self, now_s: float) -> RuntimeInfo:
+        """Move the virtual clock without changing history or commit time."""
+        self.now_s = float(now_s)
+        return self._refresh_runtime()
+
+    def _refresh_runtime(self) -> RuntimeInfo:
+        self.runtime = replace(
+            self.runtime,
+            time_since_commit=max(0.0, self.now_s - self.last_commit_s),
+        )
+        return self.runtime
+
+    # ------------------------------------------------------------------
+    # Observation
+    # ------------------------------------------------------------------
+    def build(
+        self,
+        builder: FeatureBuilder,
+        observed: str,
+        committed: Sequence[str],
+        predictor_id: int = 0,
+        translator_id: int = 0,
+    ) -> FeatureVector:
+        """Build the current state through the shared online `FeatureBuilder`."""
+        return builder.build(
+            observed,
+            committed,
+            history=self.history,
+            runtime=self.runtime,
+            predictor_id=int(predictor_id),
+            translator_id=int(translator_id),
+        )
+
+    def snapshot(self) -> dict:
+        """Serializable copy of the tracker state for labels and diagnostics."""
+        return {
+            "history": asdict(self.history),
+            "runtime": asdict(self.runtime),
+            "last_commit_s": float(self.last_commit_s),
+            "now_s": float(self.now_s),
+        }
 
 
 def estimate_length_ratio(samples: Sequence[tuple[str, str]]) -> float:

@@ -378,13 +378,16 @@ def test_build_action_targets_uses_immediate_reward_and_read_delay():
     )
     assert [target.action for target in targets] == [READ, Action(2, 4)]
     assert all(target.state_key == "state-0" for target in targets)
-    assert targets[0].next_actions == ()
+    # Non-terminal rows always advertise the READ-inclusive backup set.
+    assert targets[0].next_actions == (READ, *cfg.actions)
+    # Post-action backlog without an explicit src_words_after: the pre-action
+    # backlog (2) plus the new source word (3) minus this action's emission.
     assert targets[0].value_target == pytest.approx(
-        immediate_reward(0, 0, 2.0, 3, reward_cfg)
+        immediate_reward(0, 0, 2.0 + 3 - 0, 3, reward_cfg)
     )
-    assert targets[0].value_target == pytest.approx(-cfg.lambda_l * 2.0 * 3)
+    assert targets[0].value_target == pytest.approx(-cfg.lambda_l * 5.0 * 3)
     assert targets[1].value_target == pytest.approx(
-        immediate_reward(3, 1, 2.0, 3, reward_cfg)
+        immediate_reward(3, 1, 2.0 + 3 - 4, 3, reward_cfg)
     )
     assert targets[1].error_target == 1.0
     assert targets[1].no_emit_target == 0.0
