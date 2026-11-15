@@ -124,6 +124,16 @@ class StepResult:
     `candidates` are the translated strings that RALCP voted over, not the
     predictor's source-side continuations. `committed_after` is a fresh tuple;
     the caller's `committed` sequence is never mutated.
+
+    `pred_s` and `mt_s` are the measured stage durations. `spent_s` is the
+    serial compute billed to the decision (for `extend`, cumulative). The two
+    must never be added and reported as pipeline wall time.
+
+    `marginal_wall_s` is the incremental pipeline wall time from the runtime's
+    device schedule: the finish time of prediction and translation minus the
+    moment both devices and the action release were free. It is ``None`` when a
+    caller-supplied fake runtime does not provide it; rollout can then fall
+    back to `spent_s` as a documented approximation.
     """
 
     candidates: tuple[str, ...]
@@ -136,6 +146,7 @@ class StepResult:
     vote_margin: float
     vote_entropy: float
     no_emit: bool
+    marginal_wall_s: float | None = None
 
 
 class ControlledRuntime:
@@ -150,15 +161,97 @@ class ControlledRuntime:
     that per-candidate calls can be slower than one batched call; the matched
     baseline for any controller experiment must use this same path.
 
+    The runtime tracks two virtual devices, `t_pred_free` and `t_mt_free`, the
+    absolute times at which the prediction and translation devices finish their
+    last job. Each `execute`/`extend` schedules prediction at
+    ``max(t_pred_free, release_s)`` and translation at
+    ``max(t_mt_free, pred_end, dependency_s)``, then reports
+    `StepResult.marginal_wall_s` as the finish time minus
+    ``max(t_pred_free, t_mt_free, release_s)``. Work that overlaps with an
+    already-busy device is therefore not charged twice, and
+    ``pred_s + mt_s`` is never treated as pipeline wall time.
+
+    `cost_model` may be a `PipelineCostModel`. `estimate_marginal` exposes the
+    model-priced marginal for an action that has not run yet, using the current
+    device schedule; this is what rollout uses to score actions.
+
     `timer` may be a `run_pfba.StageTimer` (which device-synchronizes around
     each stage). Without a timer, durations come from `time.perf_counter`.
     """
 
-    def __init__(self, predictor, translator, cfg, timer=None) -> None:
+    def __init__(self, predictor, translator, cfg, timer=None, cost_model=None) -> None:
         self.predictor = predictor
         self.translator = translator
         self.cfg = cfg if cfg is not None else ControllerConfig()
         self.timer = timer
+        self.cost_model = cost_model
+        self.t_pred_free = 0.0
+        self.t_mt_free = 0.0
+
+    def reset_timing(self) -> None:
+        """Move both virtual devices back to time zero."""
+        self.t_pred_free = 0.0
+        self.t_mt_free = 0.0
+
+    def _schedule_marginal(
+        self,
+        pred_s: float,
+        mt_s: float,
+        release_s: float,
+        dependency_s: float,
+    ) -> float:
+        """Schedule one measured prediction+translation and return marginal wall.
+
+        Both devices and the action may be blocked by prior work (`t_*_free`),
+        the action release (`release_s`), or the translation's dependency
+        (`dependency_s`). The marginal wall is the finish time minus the first
+        moment all three constraints allow work to start, so overlapping with
+        prior work is not double-billed.
+        """
+        release = max(0.0, float(release_s))
+        pred_start = max(float(self.t_pred_free), release)
+        pred_end = pred_start + max(0.0, float(pred_s))
+        mt_start = max(float(self.t_mt_free), pred_end, float(dependency_s))
+        mt_end = mt_start + max(0.0, float(mt_s))
+        baseline = max(float(self.t_pred_free), float(self.t_mt_free), release)
+        self.t_pred_free = pred_end
+        self.t_mt_free = mt_end
+        return max(0.0, max(pred_end, mt_end) - baseline)
+
+    def estimate_marginal(
+        self,
+        predictor_id: int,
+        translator_id: int,
+        action: Action,
+        src_words: int,
+        tgt_words: int,
+        *,
+        release_s: float = 0.0,
+        dependency_s: float = 0.0,
+    ) -> float | None:
+        """Model-priced marginal wall for an action, or ``None``.
+
+        Returns ``None`` when no `PipelineCostModel` was supplied or the model
+        has no ``marginal_wall`` method. The release argument is folded into
+        the device free times so the result matches this runtime's scheduling.
+        """
+        marginal = getattr(self.cost_model, "marginal_wall", None)
+        if not callable(marginal):
+            return None
+        release = max(0.0, float(release_s))
+        return float(
+            marginal(
+                max(float(self.t_pred_free), release),
+                max(float(self.t_mt_free), release),
+                release,
+                float(dependency_s),
+                int(predictor_id),
+                int(translator_id),
+                action,
+                int(src_words),
+                int(tgt_words),
+            )
+        )
 
     # ------------------------------------------------------------------
     # Stage primitives
@@ -241,8 +334,16 @@ class ControlledRuntime:
         committed: Sequence[str],
         action: Action,
         seed: int,
+        release_s: float = 0.0,
+        dependency_s: float = 0.0,
     ) -> StepResult:
-        """Sample, translate, and RALCP one write action."""
+        """Sample, translate, and RALCP one write action.
+
+        `release_s` is the earliest moment the action may start (usually the
+        decision's virtual clock) and `dependency_s` the earliest moment the
+        translation may start (usually the source-arrival time). Both default
+        to zero for a cold runtime.
+        """
         self._require_write(action)
         committed_tuple = tuple(committed)
         continuations, pred_s = self.predict(observed, action, seed)
@@ -251,8 +352,14 @@ class ControlledRuntime:
             for continuation in continuations
         ] or [observed]
         outputs, mt_s = self.translate(requests, " ".join(committed_tuple))
+        marginal = self._schedule_marginal(pred_s, mt_s, release_s, dependency_s)
         return self._build_result(
-            committed_tuple, outputs, pred_s, mt_s, pred_s + mt_s
+            committed_tuple,
+            outputs,
+            pred_s,
+            mt_s,
+            pred_s + mt_s,
+            marginal,
         )
 
     def extend(
@@ -264,6 +371,8 @@ class ControlledRuntime:
         horizon: int,
         seed: int,
         spent_s: float = 0.0,
+        release_s: float = 0.0,
+        dependency_s: float = 0.0,
     ) -> StepResult:
         """Add candidates to an existing pool without re-translating it.
 
@@ -272,6 +381,10 @@ class ControlledRuntime:
         Only the new requests are translated; RALCP then votes over the full
         pool. `committed` and `current_candidates` are not mutated. Raises
         `ValueError` unless both `extra_branches` and `horizon` are positive.
+
+        `marginal_wall_s` covers only this extension; the caller adds the
+        provisional execution's marginal when it bills the decision. `spent_s`
+        stays cumulative so discarded work is still charged once.
         """
         committed_tuple = tuple(committed)
         pool = list(current_candidates)
@@ -303,12 +416,14 @@ class ControlledRuntime:
             outputs, mt_s = self.translate(requests, " ".join(committed_tuple))
             pool.extend(outputs)
 
+        marginal = self._schedule_marginal(pred_s, mt_s, release_s, dependency_s)
         return self._build_result(
             committed_tuple,
             pool,
             pred_s,
             mt_s,
             float(spent_s) + pred_s + mt_s,
+            marginal,
         )
 
     # ------------------------------------------------------------------
@@ -334,6 +449,7 @@ class ControlledRuntime:
         pred_s: float,
         mt_s: float,
         spent_s: float,
+        marginal_wall_s: float,
     ) -> StepResult:
         candidates = tuple(pool)
         selected = self.ralcp(candidates)
@@ -352,4 +468,5 @@ class ControlledRuntime:
             vote_margin=margin,
             vote_entropy=entropy,
             no_emit=not selected_words,
+            marginal_wall_s=float(marginal_wall_s),
         )

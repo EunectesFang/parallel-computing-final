@@ -437,3 +437,106 @@ def test_vote_statistics_consensus_and_split():
     assert top1 == pytest.approx(1 / 3)
     assert margin == pytest.approx(0.0)
     assert entropy == pytest.approx(math.log(3.0))
+
+
+# ----------------------------------------------------------------------
+# Marginal wall accounting
+# ----------------------------------------------------------------------
+class StageSeconds:
+    """Fixed duration per stage name, recorded in call order."""
+
+    def __init__(self, pred_s: float = 2.0, mt_s: float = 1.0) -> None:
+        self.pred_s = float(pred_s)
+        self.mt_s = float(mt_s)
+        self.calls: list[tuple[str, float]] = []
+
+    def run(self, name, function):
+        value = function()
+        seconds = self.pred_s if name == "pred" else self.mt_s
+        self.calls.append((name, seconds))
+        return value, seconds
+
+
+def test_measured_table_accepts_optional_marginal_field():
+    table = MeasuredCostTable(
+        [(0, 0, Action(2, 4), 0.2, 0.3, 0.4), (0, 0, Action(2, 4), 0.4, 0.5)]
+    )
+    assert table.predict(0, 0, Action(2, 4), 1, 1).pred_s == pytest.approx(0.3)
+    # The optional field is preserved for audit and checkpointing; the legacy
+    # five-field record keeps its length instead of inventing a marginal.
+    assert len(table.records[0]) == 6 and table.records[0][5] == pytest.approx(0.4)
+    assert len(table.records[1]) == 5
+
+
+def test_measured_table_rejects_malformed_record_length():
+    with pytest.raises(ValueError, match="cost records must be"):
+        MeasuredCostTable([(0, 0, Action(2, 4), 0.1, 0.2, 0.3, 0.4)])
+
+
+def test_runtime_tracks_device_free_times_and_reports_marginal():
+    predictor = FakePredictor()
+    translator = ScriptedTranslator(["hello", "hello"])
+    timer = StageSeconds(pred_s=2.0, mt_s=1.0)
+    runtime = ControlledRuntime(
+        predictor, translator, ControllerConfig(), timer=timer
+    )
+    action = Action(1, 4)
+
+    first = runtime.execute("a b", [], action, seed=0)
+    # One candidate: prediction 2.0 s then translation 1.0 s from free devices.
+    assert first.pred_s == pytest.approx(2.0)
+    assert first.mt_s == pytest.approx(1.0)
+    assert first.spent_s == pytest.approx(3.0)
+    assert first.marginal_wall_s == pytest.approx(3.0)
+    assert runtime.t_pred_free == pytest.approx(2.0)
+    assert runtime.t_mt_free == pytest.approx(3.0)
+
+    second = runtime.execute("a b", [], action, seed=1)
+    # Prediction overlaps the first translation (devices: pred free 2, mt free
+    # 3). The action adds 2.0 s, not the serial pred_s + mt_s = 3.0 s.
+    assert second.pred_s + second.mt_s == pytest.approx(3.0)
+    assert second.marginal_wall_s == pytest.approx(2.0)
+    assert second.marginal_wall_s < second.pred_s + second.mt_s
+
+
+def test_runtime_release_and_dependency_gate_the_schedule():
+    predictor = FakePredictor()
+    translator = ScriptedTranslator(["hello"])
+    runtime = ControlledRuntime(
+        predictor,
+        translator,
+        ControllerConfig(),
+        timer=StageSeconds(pred_s=2.0, mt_s=1.0),
+    )
+
+    released = runtime.execute(
+        "a", [], Action(1, 4), seed=0, release_s=5.0, dependency_s=5.0
+    )
+    # Pred 5..7, translation 7..8, baseline is the release moment 5.
+    assert released.marginal_wall_s == pytest.approx(3.0)
+    assert runtime.t_pred_free == pytest.approx(7.0)
+
+    runtime.reset_timing()
+    dependent = runtime.execute(
+        "a", [], Action(1, 4), seed=0, release_s=0.0, dependency_s=10.0
+    )
+    # Prediction ends at 2 but translation waits for its dependency at 10.
+    assert dependent.marginal_wall_s == pytest.approx(11.0)
+    assert dependent.marginal_wall_s > dependent.pred_s + dependent.mt_s
+
+
+def test_extend_reports_incremental_marginal_only():
+    runtime, _predictor, _translator = _runtime(["a", "b", "c", "d"])
+    timer = StageSeconds(pred_s=1.0, mt_s=1.0)
+    runtime.timer = timer
+    action = Action(1, 4)
+
+    first = runtime.execute("s", [], action, seed=0)
+    assert first.marginal_wall_s == pytest.approx(2.0)
+    extended = runtime.extend(
+        "s", [], list(first.candidates), 1, 4, seed=0, spent_s=first.spent_s
+    )
+    # Extension schedules behind the first decision's devices; the marginal is
+    # the incremental wall, while spent_s stays cumulative.
+    assert extended.marginal_wall_s < extended.spent_s
+    assert extended.spent_s == pytest.approx(first.spent_s + 2.0)

@@ -92,12 +92,13 @@ def _to_cpu(value):
     return value.detach().cpu() if hasattr(value, "detach") else value
 
 
-def _cost_model_records(cost_model) -> list[tuple[int, int, Action, float, float]]:
+def _cost_model_records(cost_model) -> list[tuple]:
     """Extract measured records from a cost model, tolerating wrappers.
 
     `MeasuredCostTable` exposes `.records`. `PowerLawCostModel` keeps its
     measured fallback table under `.table`, so the same lookup is used for
-    both. A model that exposes neither stores no records.
+    both. A model that exposes neither stores no records. An optional sixth
+    ``marginal_wall_s`` field is preserved as measured.
     """
     if cost_model is None:
         return []
@@ -107,49 +108,61 @@ def _cost_model_records(cost_model) -> list[tuple[int, int, Action, float, float
         records = getattr(table, "records", None)
     if records is None:
         return []
-    return [
-        (
-            int(predictor_id),
-            int(translator_id),
-            action,
-            float(pred_s),
-            float(mt_s),
+    normalised: list[tuple] = []
+    for record in records:
+        values = tuple(record)
+        if len(values) not in (5, 6) or not isinstance(values[2], Action):
+            continue
+        head = (
+            int(values[0]),
+            int(values[1]),
+            values[2],
+            float(values[3]),
+            float(values[4]),
         )
-        for predictor_id, translator_id, action, pred_s, mt_s in records
-        if isinstance(action, Action)
-    ]
+        if len(values) == 6:
+            normalised.append((*head, float(values[5])))
+        else:
+            normalised.append(head)
+    return normalised
 
 
-def _serialize_cost_records(
-    records: Sequence[tuple[int, int, Action, float, float]],
-) -> list[list]:
+def _serialize_cost_records(records: Sequence[tuple]) -> list[list]:
     """Turn records into primitive lists so any torch loader can read them."""
-    return [
-        [
+    serialized: list[list] = []
+    for record in records:
+        values = tuple(record)
+        if len(values) not in (5, 6):
+            raise ValueError("cost records must have five or six fields")
+        predictor_id, translator_id, action, pred_s, mt_s = values[:5]
+        item = [
             int(predictor_id),
             int(translator_id),
             [int(action.branches), int(action.horizon)],
             float(pred_s),
             float(mt_s),
         ]
-        for predictor_id, translator_id, action, pred_s, mt_s in records
-    ]
+        if len(values) == 6:
+            item.append(float(values[5]))
+        serialized.append(item)
+    return serialized
 
 
-def _deserialize_cost_records(raw: Any) -> list[tuple[int, int, Action, float, float]]:
+def _deserialize_cost_records(raw: Any) -> list[tuple]:
     """Rebuild `Action` objects from the stored primitive records."""
     if raw is None:
         return []
     if not isinstance(raw, (list, tuple)):
         raise ValueError("checkpoint cost_records must be a list")
-    records: list[tuple[int, int, Action, float, float]] = []
+    records: list[tuple] = []
     for index, item in enumerate(raw):
-        if not isinstance(item, (list, tuple)) or len(item) != 5:
+        if not isinstance(item, (list, tuple)) or len(item) not in (5, 6):
             raise ValueError(
                 f"checkpoint cost_records[{index}] must be "
-                "(predictor_id, translator_id, [branches, horizon], pred_s, mt_s)"
+                "(predictor_id, translator_id, [branches, horizon], pred_s, "
+                "mt_s[, marginal_wall_s])"
             )
-        predictor_id, translator_id, action_pair, pred_s, mt_s = item
+        predictor_id, translator_id, action_pair, pred_s, mt_s = item[:5]
         if (
             not isinstance(action_pair, (list, tuple))
             or len(action_pair) != 2
@@ -157,15 +170,16 @@ def _deserialize_cost_records(raw: Any) -> list[tuple[int, int, Action, float, f
             raise ValueError(
                 f"checkpoint cost_records[{index}] action must be [branches, horizon]"
             )
-        records.append(
-            (
-                int(predictor_id),
-                int(translator_id),
-                Action(int(action_pair[0]), int(action_pair[1])),
-                float(pred_s),
-                float(mt_s),
-            )
+        record = (
+            int(predictor_id),
+            int(translator_id),
+            Action(int(action_pair[0]), int(action_pair[1])),
+            float(pred_s),
+            float(mt_s),
         )
+        if len(item) == 6:
+            record = (*record, float(item[5]))
+        records.append(record)
     return records
 
 

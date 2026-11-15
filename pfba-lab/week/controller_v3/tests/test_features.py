@@ -17,6 +17,7 @@ from controller_v3.features import (
     OptionalConfidence,
     RuntimeInfo,
     estimate_length_ratio,
+    feature_diagnostics,
 )
 
 
@@ -241,3 +242,86 @@ def test_estimate_length_ratio_uses_non_empty_pairs_and_clamps():
 def test_numeric_values_are_finite():
     vector = FeatureBuilder().build("Hallo Welt.", ["Hello", "world"])
     assert all(math.isfinite(value) for value in vector.numeric)
+
+
+# ----------------------------------------------------------------------
+# Feature diagnostics
+# ----------------------------------------------------------------------
+def _vector(**overrides) -> FeatureVector:
+    values = [0.0] * len(NUMERIC_FEATURES)
+    for name, value in overrides.items():
+        values[NUMERIC_FEATURES.index(name)] = float(value)
+    return FeatureVector(
+        numeric=tuple(values),
+        predictor_id=0,
+        translator_id=0,
+        src_ids=(),
+        tgt_ids=(),
+    )
+
+
+def test_feature_diagnostics_reports_mean_std_nonzero_and_missing():
+    vectors = [
+        _vector(src_words=1, tgt_words=0),
+        _vector(src_words=3, tgt_words=2),
+    ]
+    diagnostics = feature_diagnostics(vectors)
+
+    assert diagnostics["n"] == 2
+    src = diagnostics["features"]["src_words"]
+    assert src["mean"] == pytest.approx(2.0)
+    assert src["std"] == pytest.approx(1.0)
+    assert src["nonzero"] == 2
+    assert src["missing"] == 0
+    tgt = diagnostics["features"]["tgt_words"]
+    assert tgt["mean"] == pytest.approx(1.0)
+    assert tgt["nonzero"] == 1
+
+
+def test_feature_diagnostics_counts_non_finite_values_as_missing():
+    values = [0.0] * len(NUMERIC_FEATURES)
+    values[NUMERIC_FEATURES.index("src_words")] = float("nan")
+    vector = FeatureVector(
+        numeric=tuple(values),
+        predictor_id=0,
+        translator_id=0,
+        src_ids=(),
+        tgt_ids=(),
+    )
+    diagnostics = feature_diagnostics([vector])
+    src = diagnostics["features"]["src_words"]
+    assert src["missing"] == 1
+    assert src["mean"] is None
+    assert src["std"] is None
+
+
+def test_feature_diagnostics_flags_constant_training_feature_that_moves():
+    training = [_vector(src_words=2) for _ in range(3)]
+    serving = [_vector(src_words=2), _vector(src_words=5)]
+    diagnostics = feature_diagnostics(serving, reference=training)
+
+    src = diagnostics["features"]["src_words"]
+    assert src["train_mean"] == pytest.approx(2.0)
+    assert src["serve_mean"] == pytest.approx(3.5)
+    assert src["mean_diff"] == pytest.approx(1.5)
+    assert src["constant_train_varies_serving"] is True
+    assert "src_words" in diagnostics["constant_train_varies_serving"]
+    assert any("src_words" in warning for warning in diagnostics["warnings"])
+
+    # A feature constant in both sets is not flagged.
+    assert (
+        diagnostics["features"]["tgt_words"]["constant_train_varies_serving"]
+        is False
+    )
+
+
+def test_feature_diagnostics_rejects_a_wrong_width_vector():
+    vector = FeatureVector(
+        numeric=(0.0, 1.0),
+        predictor_id=0,
+        translator_id=0,
+        src_ids=(),
+        tgt_ids=(),
+    )
+    with pytest.raises(ValueError, match="NUMERIC_FEATURES"):
+        feature_diagnostics([vector])

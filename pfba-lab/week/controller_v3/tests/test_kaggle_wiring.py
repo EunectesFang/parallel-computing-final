@@ -21,7 +21,7 @@ from controller_v3.action import READ, Action
 from controller_v3.checkpoint import load_checkpoint
 from controller_v3.config import ControllerConfig
 from controller_v3.cost_model import CostEstimate, MeasuredCostTable
-from controller_v3.features import FeatureBuilder
+from controller_v3.features import NUMERIC_FEATURES, FeatureBuilder
 from controller_v3.labeler import ActionOutcome, CounterfactualLabeler
 from controller_v3.network import CAVCNetwork, WriteOutputs
 from controller_v3.rollout import run_rollout
@@ -277,12 +277,14 @@ def test_run_preflight_writes_artifacts_and_honest_metrics(tmp_path):
         (tmp_path / "cost_records.json").read_text(encoding="utf-8")
     )
     assert cost_payload["records"]
-    for predictor_id, translator_id, action_pair, pred_s, mt_s in cost_payload[
-        "records"
-    ]:
+    for record in cost_payload["records"]:
+        predictor_id, translator_id, action_pair, pred_s, mt_s = record[:5]
         assert predictor_id == 0 and translator_id == 0
         assert pred_s >= 0.0 and mt_s >= 0.0
         assert action_pair[0] > 0 and action_pair[1] > 0
+        # The optional sixth field is measured pipeline wall time.
+        assert len(record) == 6 and record[5] >= 0.0
+        assert record[5] <= pred_s + mt_s + 1e-9
 
     # The checkpoint restores into a freshly built network of the same shape.
     restored = CAVCNetwork(
@@ -322,14 +324,21 @@ def test_calibrate_cost_records_uses_per_candidate_seeds():
     assert summary["predictor_id"] == 1
     assert summary["translator_id"] == 1
     assert [record[2] for record in records] == list(WRITE_ACTIONS)
-    for predictor_id, translator_id, _action, pred_s, mt_s in records:
+    for record in records:
+        predictor_id, translator_id, _action, pred_s, mt_s = record[:5]
         assert predictor_id == 1 and translator_id == 1
         assert pred_s >= 0.0 and mt_s >= 0.0
+        # Measured pipeline marginal is recorded separately; it is never
+        # presented as the serial pred_s + mt_s sum.
+        assert len(record) == 6
+        assert record[5] >= 0.0
+        assert record[5] == pytest.approx(pred_s + mt_s)
 
     # FixedTimer: the b2h4 action samples twice and translates once.
     assert records[0][3] == pytest.approx(2 * harness["timer"].seconds)
     assert records[0][4] == pytest.approx(harness["timer"].seconds)
     assert records[1][3] == pytest.approx(4 * harness["timer"].seconds)
+    assert summary["per_action"]["b2h4"]["marginal_wall_s_median"] >= 0.0
 
     # Runtime path: candidate i uses seed + i with branches=1.
     calls = predictor.sample_calls
@@ -1122,6 +1131,25 @@ def test_deadline_skip_without_prior_checkpoint_writes_no_checkpoint(tmp_path):
     assert not checkpoint.exists()
 
 
+def _feature_stats_payload():
+    return {
+        "n": 1,
+        "features": {
+            name: {"mean": 0.0, "std": 0.0, "nonzero": 0, "missing": 0}
+            for name in NUMERIC_FEATURES
+        },
+    }
+
+
+def _small_pair():
+    return {
+        "predictor": "small",
+        "translator": "small",
+        "predictor_id": 0,
+        "translator_id": 0,
+    }
+
+
 def _write_checkpoint(path, harness, extra):
     """Write a controller checkpoint with a caller-controlled `trained` flag."""
     cfg = harness["cfg"]
@@ -1135,6 +1163,8 @@ def _write_checkpoint(path, harness, extra):
         extra={
             "vocab": list(harness["vocab"].id_to_token),
             "length_ratio": 1.0,
+            "model_pair": _small_pair(),
+            "feature_stats": _feature_stats_payload(),
             **extra,
         },
     )
@@ -1213,3 +1243,214 @@ def test_confirm_on_trained_checkpoint_reports_trained(tmp_path):
     assert summary["trained"] is True
     assert summary["allow_untrained"] is False
     assert summary["n_traces"] == 1
+
+
+# ----------------------------------------------------------------------
+# Task 9: cost/risk/fixed-baseline/diagnostics wiring
+# ----------------------------------------------------------------------
+def test_run_dev_writes_feature_stats_paired_and_risk_calibration(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    holdout = Sentence(
+        "dev:0009",
+        "hallo welt wir lernen heute .",
+        "hello world we learn today .",
+        split="dev",
+    )
+    summary = kaggle.run_dev(
+        limit=0,
+        stride=1,
+        output_dir=str(tmp_path),
+        max_hours=1.0,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=[*harness["sentences"], holdout],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+
+    assert summary["post_controller"] == "disabled"
+    assert summary["candidate_mode"] == "per_candidate"
+    assert summary["rollout"]["n"] == 1
+    assert summary["rollout_fixed"]["n"] == 1
+    assert summary["n_train_targets"] < summary["n_targets"]
+    assert summary["n_risk_calibration_targets"] > 0
+    assert summary["risk_calibration"]["status"] == "ok"
+    assert math.isfinite(summary["risk_calibration"]["error_risk"]["brier"])
+    assert math.isfinite(summary["risk_calibration"]["no_emit"]["ece"])
+
+    # The fixed baseline runs the same runtime path and the paired interval
+    # file is written with honest per-metric statuses.
+    paired = json.loads((tmp_path / "paired.json").read_text(encoding="utf-8"))
+    assert paired["fixed"] == "(4,6)"
+    assert set(paired["metrics"]) == {"bleu", "laal", "completion_s", "comet"}
+    assert paired["metrics"]["comet"]["status"] == "skipped"
+    assert paired["metrics"]["completion_s"]["status"] == "ok"
+    assert paired["metrics"]["completion_s"]["n"] == 1
+    assert (tmp_path / "traces_fixed.jsonl").is_file()
+
+    feature_payload = json.loads(
+        (tmp_path / "feature_stats.json").read_text(encoding="utf-8")
+    )
+    assert feature_payload["candidate_mode"] == "per_candidate"
+    assert feature_payload["training"]["n"] == summary["n_states"]
+    assert set(feature_payload["serving"]["features"]) == set(NUMERIC_FEATURES)
+    assert "warnings" in feature_payload["serving"]
+
+    # Checkpoint metadata carries the pair, vocabulary, and feature stats that
+    # confirm validates against its resolved adapters.
+    payload = torch.load(
+        tmp_path / "checkpoint.pt", map_location="cpu", weights_only=True
+    )
+    extra = payload["extra"]
+    assert extra["model_pair"]["predictor_id"] == 0
+    assert extra["vocab"] and "hallo" in extra["vocab"]
+    assert set(extra["feature_stats"]["features"]) == set(NUMERIC_FEATURES)
+    assert extra["candidate_mode"] == "per_candidate"
+    assert extra["post_controller"] == "disabled"
+
+
+def test_run_preflight_records_post_controller_switch(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+
+    def run(name, enabled):
+        return kaggle.run_preflight(
+            limit=3,
+            output_dir=str(tmp_path / name),
+            label_states=2,
+            rollout_sentences=1,
+            seed=cfg.seed,
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=harness["sentences"],
+            cfg=cfg,
+            predictor_id=0,
+            translator_id=0,
+            timer=harness["timer"],
+            post_controller=enabled,
+        )
+
+    disabled = run("off", False)
+    enabled = run("on", True)
+    assert disabled["post_controller"] == "disabled"
+    assert enabled["post_controller"] == "enabled"
+    assert any("training-only" in note for note in disabled["notes"])
+    assert any("uncalibrated" in note for note in enabled["notes"])
+
+
+def test_label_sentence_records_the_candidate_mode():
+    harness = make_harness()
+    cfg = harness["cfg"]
+    sentence = harness["sentences"][0]
+    row = kaggle.label_sentence(harness["labeler"], sentence, cfg=cfg, stride=1)
+    assert row["candidate_mode"] == "per_candidate"
+
+    batched = CounterfactualLabeler(
+        harness["predictor"],
+        harness["translator"],
+        cfg,
+        timer=harness["timer"],
+        candidate_mode="batched",
+    )
+    batched_row = kaggle.label_sentence(batched, sentence, cfg=cfg, stride=1)
+    assert batched_row["candidate_mode"] == "batched"
+
+
+@pytest.mark.parametrize(
+    "extra, match",
+    [
+        (
+            {
+                "trained": True,
+                "model_pair": {
+                    "predictor": "large",
+                    "translator": "large",
+                    "predictor_id": 1,
+                    "translator_id": 1,
+                },
+            },
+            "mismatch",
+        ),
+        ({"trained": True, "vocab": None}, "vocabulary"),
+        ({"trained": True, "feature_stats": None}, "feature_stats"),
+    ],
+    ids=["pair-mismatch", "missing-vocab", "missing-feature-stats"],
+)
+def test_run_confirm_refuses_bad_checkpoint_metadata(tmp_path, extra, match):
+    harness = make_harness()
+    checkpoint = tmp_path / "bad.pt"
+    _write_checkpoint(checkpoint, harness, extra)
+
+    with pytest.raises(ValueError, match=match):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / "confirm"),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=checkpoint,
+            timer=harness["timer"],
+        )
+
+
+def test_run_confirm_writes_fixed_baseline_and_paired_metrics(tmp_path):
+    harness = make_harness()
+    summary = kaggle.run_confirm(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        cfg=harness["cfg"],
+        timer=harness["timer"],
+    )
+
+    assert summary["post_controller"] == "disabled"
+    assert summary["rollout"]["n"] == 1
+    assert summary["rollout_fixed"]["n"] == 1
+    assert summary["risk_calibration"]["status"] == "unavailable"
+    paired = json.loads((tmp_path / "paired.json").read_text(encoding="utf-8"))
+    assert paired["metrics"]["comet"]["status"] == "skipped"
+    assert paired["metrics"]["laal"]["status"] in {"ok", "unavailable"}
+    assert (tmp_path / "traces_fixed.jsonl").is_file()
+
+
+def test_run_dev_refuses_mixed_candidate_modes_in_labels(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    output_dir = tmp_path / "dev"
+    output_dir.mkdir()
+    row = {
+        "sentence_id": "s0",
+        "split": "dev",
+        "source": harness["sentences"][0].source,
+        "stride": 1,
+        "label_format": kaggle.LABEL_FORMAT,
+        "candidate_mode": "batched",
+        "states": [{"read_pos": 3, "observed": "hallo", "outcomes": []}],
+    }
+    (output_dir / "labels.jsonl").write_text(
+        json.dumps(row) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="candidate_mode"):
+        kaggle.run_dev(
+            limit=0,
+            output_dir=str(output_dir),
+            max_hours=1.0,
+            seed=cfg.seed,
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=harness["sentences"],
+            cfg=cfg,
+            predictor_id=0,
+            translator_id=0,
+            timer=harness["timer"],
+            candidate_mode="per_candidate",
+        )

@@ -17,7 +17,7 @@ from controller_v3.cost_model import CostEstimate
 from controller_v3.evaluator import MetricUnavailableError, paired_bootstrap, summarize_traces
 from controller_v3.features import FeatureBuilder
 from controller_v3.post_controller import PostAction, PostDecision
-from controller_v3.rollout import RolloutTrace, run_rollout
+from controller_v3.rollout import RolloutTrace, run_fixed_rollout, run_rollout
 from controller_v3.runtime import StepResult
 
 
@@ -712,4 +712,163 @@ def test_paired_bootstrap_bleu_raises_when_unavailable(monkeypatch):
 
 def test_paired_bootstrap_rejects_unknown_metric():
     with pytest.raises(ValueError):
-        paired_bootstrap([make_trace("s1", 1.0)], [make_trace("s1", 1.0)], "comet")
+        paired_bootstrap([make_trace("s1", 1.0)], [make_trace("s1", 1.0)], "wer")
+
+
+def test_paired_bootstrap_comet_reports_unavailable_instead_of_inventing(
+    monkeypatch,
+):
+    class UnavailableComet:
+        @staticmethod
+        def comet_score(*args, **kwargs):
+            return {"status": "unavailable", "reason": "no comet"}
+
+    monkeypatch.setattr(evaluator, "comet_score", UnavailableComet.comet_score)
+    with pytest.raises(MetricUnavailableError, match="COMET"):
+        paired_bootstrap(
+            [make_trace("s1", 1.0)],
+            [make_trace("s1", 1.0)],
+            "comet",
+            samples=10,
+        )
+
+
+# ----------------------------------------------------------------------
+# Marginal wall billing and the fixed (4,6) baseline
+# ----------------------------------------------------------------------
+class MarginalRuntime:
+    """One write returns a known marginal wall distinct from the serial sum."""
+
+    def __init__(self, marginal_wall_s):
+        self.marginal_wall_s = marginal_wall_s
+        self.execute_calls = 0
+
+    def execute(self, observed, committed, action, seed):
+        self.execute_calls += 1
+        return StepResult(
+            candidates=("prov-a",),
+            selected="prov",
+            committed_after=tuple(committed) + ("prov",),
+            pred_s=2.0,
+            mt_s=2.0,
+            spent_s=4.0,
+            vote_top1=1.0,
+            vote_margin=1.0,
+            vote_entropy=0.0,
+            no_emit=False,
+            marginal_wall_s=self.marginal_wall_s,
+        )
+
+    def translate(self, requests, prefix, final=False):
+        return ["eos"], 0.5
+
+
+def _write_only_config():
+    return ControllerConfig(
+        actions=(Action(2, 4),),
+        advantage_baseline=(4, 6),
+        min_start=3,
+        arrival_gap=0.3,
+    )
+
+
+def test_rollout_bills_marginal_wall_not_the_serial_sum():
+    network = FakeNetwork(
+        read_values=[-5.0], write_values={Action(2, 4): 0.0}
+    )
+    runtime = MarginalRuntime(marginal_wall_s=1.5)
+
+    trace = run_rollout(
+        sentence(source="a b c d"),
+        None,
+        None,
+        network,
+        FeatureBuilder(),
+        None,
+        _write_only_config(),
+        runtime=runtime,
+    )
+
+    write = trace.steps[0]
+    assert write["pred_s"] == pytest.approx(2.0)
+    assert write["mt_s"] == pytest.approx(2.0)
+    assert write["spent_s"] == pytest.approx(4.0)
+    assert write["marginal_wall_s"] == pytest.approx(1.5)
+    # 0.6 s release + 1.5 s marginal, then the EOS 0.5 s translation.
+    assert trace.completion_s == pytest.approx(2.6)
+
+    # A runtime without a marginal measurement falls back to serial compute.
+    serial = run_rollout(
+        sentence(source="a b c d"),
+        None,
+        None,
+        FakeNetwork(read_values=[-5.0], write_values={Action(2, 4): 0.0}),
+        FeatureBuilder(),
+        None,
+        _write_only_config(),
+        runtime=MarginalRuntime(marginal_wall_s=None),
+    )
+    assert serial.steps[0]["marginal_wall_s"] is None
+    assert serial.completion_s == pytest.approx(5.1)
+
+
+def test_fixed_rollout_always_writes_4_6_and_never_reads():
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),), min_start=3, arrival_gap=0.3
+    )
+    predictor = RecordingPredictor("part")
+    translator = PoolTranslator("x y")
+
+    trace = run_fixed_rollout(
+        sentence(source="a b c d e f"),
+        predictor,
+        translator,
+        FeatureBuilder(),
+        None,
+        cfg,
+    )
+
+    assert trace.action_histogram == {"b4h6": 3}
+    assert "read" not in trace.action_histogram
+    assert trace.read_fraction == 0.0
+    assert [step["action"] for step in trace.steps] == [
+        "b4h6",
+        "b4h6",
+        "b4h6",
+        "eos",
+    ]
+    # Same per-candidate runtime path: four single-branch samples per write at
+    # horizon 6 with consecutive seeds, not one batched call.
+    assert len(predictor.calls) == 3 * 4
+    assert all(
+        branches == 1 and horizon == 6
+        for _observed, branches, horizon, _seed in predictor.calls
+    )
+    for index in range(0, len(predictor.calls), 4):
+        seeds = [call[3] for call in predictor.calls[index : index + 4]]
+        assert seeds == [seeds[0] + offset for offset in range(4)]
+    assert trace.committed == ("x", "y") * 4
+    assert trace.hypothesis == "x y x y x y x y"
+
+
+def test_fixed_rollout_shares_the_runtime_candidate_path():
+    cfg = ControllerConfig(
+        actions=(Action(2, 4),), min_start=3, arrival_gap=0.3
+    )
+    predictor = RecordingPredictor("part")
+    translator = PoolTranslator("x y")
+
+    trace = run_fixed_rollout(
+        sentence(source="a b c d"),
+        predictor,
+        translator,
+        FeatureBuilder(),
+        None,
+        cfg,
+    )
+    first = trace.steps[0]
+    # The first decision's observed prefix and candidate seeds are the same
+    # call shape `ControlledRuntime.execute` makes for (4, 6).
+    assert predictor.calls[0][:3] == ("a b c", 1, 6)
+    assert first["pred_s"] > 0.0 and first["mt_s"] > 0.0
+    assert first["new_words"] == ("x", "y")

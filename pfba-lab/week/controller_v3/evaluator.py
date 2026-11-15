@@ -24,6 +24,7 @@ __all__ = [
     "comet_score",
     "summarize_traces",
     "paired_bootstrap",
+    "risk_calibration",
     "DEFAULT_COMET_MODEL",
 ]
 
@@ -31,6 +32,229 @@ DEFAULT_COMET_MODEL = "Unbabel/wmt22-comet-da"
 
 # Metrics `paired_bootstrap` knows how to pair.
 _NUMERIC_METRICS = ("completion_s", "read_fraction")
+
+
+def _sigmoid(value: float) -> float:
+    """Numerically safe logistic for the network's risk logits."""
+    if value >= 0.0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exponent = math.exp(value)
+    return exponent / (1.0 + exponent)
+
+
+def _bucket_calibration(
+    probabilities: Sequence[float],
+    labels: Sequence[float],
+    buckets: int,
+) -> tuple[float | None, list[dict]]:
+    """Brier-free reliability table: ECE-style bucket error and its buckets.
+
+    Each bucket reports ``lo``/``hi``, ``count``, ``mean_predicted``,
+    ``mean_label``, and ``abs_gap``. The returned scalar is
+    ``sum(count_b / n * abs(mean_predicted_b - mean_label_b))``, i.e. the
+    expected calibration error of the reliability diagram. It is diagnostic
+    only: the underlying sigmoid is not calibrated and must never be used as a
+    hard safety threshold.
+    """
+    usable = [
+        (float(probability), float(label))
+        for probability, label in zip(probabilities, labels)
+        if math.isfinite(float(probability)) and math.isfinite(float(label))
+    ]
+    if not usable:
+        return None, []
+    count = len(usable)
+    rows: list[dict] = []
+    error = 0.0
+    for index in range(int(buckets)):
+        low = index / buckets
+        high = (index + 1) / buckets
+        members = [
+            (probability, label)
+            for probability, label in usable
+            if (low <= probability < high)
+            or (index == buckets - 1 and probability == 1.0)
+        ]
+        if not members:
+            rows.append(
+                {
+                    "lo": float(low),
+                    "hi": float(high),
+                    "count": 0,
+                    "mean_predicted": None,
+                    "mean_label": None,
+                    "abs_gap": None,
+                }
+            )
+            continue
+        mean_predicted = sum(item[0] for item in members) / len(members)
+        mean_label = sum(item[1] for item in members) / len(members)
+        gap = abs(mean_predicted - mean_label)
+        error += gap * len(members) / count
+        rows.append(
+            {
+                "lo": float(low),
+                "hi": float(high),
+                "count": len(members),
+                "mean_predicted": float(mean_predicted),
+                "mean_label": float(mean_label),
+                "abs_gap": float(gap),
+            }
+        )
+    return float(error), rows
+
+
+def _brier(probabilities: Sequence[float], labels: Sequence[float]) -> float | None:
+    pairs = [
+        (float(probability), float(label))
+        for probability, label in zip(probabilities, labels)
+        if math.isfinite(float(probability)) and math.isfinite(float(label))
+    ]
+    if not pairs:
+        return None
+    return sum((probability - label) ** 2 for probability, label in pairs) / len(pairs)
+
+
+def risk_calibration(
+    network,
+    targets: Sequence,
+    *,
+    buckets: int = 10,
+) -> dict:
+    """Calibrate the network's `error_risk` / `no_emit` heads on targets.
+
+    `targets` must be held-out `ActionTarget` rows (the caller is responsible
+    for not calibrating on rows that trained the network). READ rows are
+    skipped because READ has no write head. Every write target contributes one
+    predicted probability from the network's logistic head and one 0/1 label
+    (`error_target` / `no_emit_target`).
+
+    Returns Brier scores, ECE-style reliability-bucket errors, the reliability
+    tables, and base rates for both heads. An empty write set reports
+    ``status="unavailable"`` with no invented score. The probabilities come
+    straight from the network's sigmoid: they are recorded for diagnosis and
+    must never be used as an uncalibrated hard safety threshold.
+    """
+    import torch
+
+    rows = [
+        target
+        for target in targets
+        if not getattr(target.action, "is_read", False)
+    ]
+    if not rows:
+        return {
+            "status": "unavailable",
+            "reason": "no held-out write targets",
+            "n": 0,
+            "error_risk": {},
+            "no_emit": {},
+        }
+
+    states = [target.state for target in rows]
+    numeric = torch.tensor(
+        [list(state.numeric) for state in states], dtype=torch.float32
+    )
+    predictor_ids = torch.tensor(
+        [int(state.predictor_id) for state in states], dtype=torch.long
+    )
+    translator_ids = torch.tensor(
+        [int(state.translator_id) for state in states], dtype=torch.long
+    )
+    def _padded(sequences) -> torch.Tensor:
+        """Right-pad variable-length id tuples so they fit one batch tensor."""
+        width = max((len(sequence) for sequence in sequences), default=0)
+        if width == 0:
+            return torch.zeros((len(sequences), 0), dtype=torch.long)
+        return torch.tensor(
+            [
+                list(sequence) + [0] * (width - len(sequence))
+                for sequence in sequences
+            ],
+            dtype=torch.long,
+        )
+
+    src_ids = _padded([state.src_ids for state in states])
+    tgt_ids = _padded([state.tgt_ids for state in states])
+
+    actions = sorted({target.action for target in rows})
+    action_index = {action: index for index, action in enumerate(actions)}
+
+    can_eval = callable(getattr(network, "eval", None))
+    was_training = getattr(network, "training", None)
+    if can_eval:
+        network.eval()
+    try:
+        with torch.no_grad():
+            z = network.encode(
+                numeric, predictor_ids, translator_ids, src_ids, tgt_ids
+            )
+            outputs = network.write_values(z, actions)
+            error_logits = outputs.error_risk
+            no_emit_logits = outputs.no_emit
+            error_probabilities: list[float] = []
+            no_emit_probabilities: list[float] = []
+            error_labels: list[float] = []
+            no_emit_labels: list[float] = []
+            for index, target in enumerate(rows):
+                column = action_index[target.action]
+                error_probabilities.append(
+                    _sigmoid(float(error_logits[index][column]))
+                )
+                no_emit_probabilities.append(
+                    _sigmoid(float(no_emit_logits[index][column]))
+                )
+                error_labels.append(float(target.error_target))
+                no_emit_labels.append(float(target.no_emit_target))
+    finally:
+        if (
+            can_eval
+            and was_training is not None
+            and callable(getattr(network, "train", None))
+        ):
+            network.train(bool(was_training))
+
+    error_ece, error_buckets = _bucket_calibration(
+        error_probabilities, error_labels, buckets
+    )
+    no_emit_ece, no_emit_buckets = _bucket_calibration(
+        no_emit_probabilities, no_emit_labels, buckets
+    )
+
+    def _head(probabilities, labels, ece, bucket_rows) -> dict:
+        return {
+            "brier": _brier(probabilities, labels),
+            "ece": ece,
+            "buckets": bucket_rows,
+            "base_rate": (
+                sum(labels) / len(labels) if labels else None
+            ),
+            "mean_predicted": (
+                sum(probabilities) / len(probabilities)
+                if probabilities
+                else None
+            ),
+        }
+
+    return {
+        "status": "ok",
+        "n": len(rows),
+        "buckets": int(buckets),
+        "error_risk": _head(
+            error_probabilities, error_labels, error_ece, error_buckets
+        ),
+        "no_emit": _head(
+            no_emit_probabilities,
+            no_emit_labels,
+            no_emit_ece,
+            no_emit_buckets,
+        ),
+        "threshold_note": (
+            "Predicted probabilities come from an uncalibrated sigmoid. Use "
+            "them as diagnostics or soft inputs only, never as a hard safety "
+            "threshold."
+        ),
+    }
 
 
 class MetricUnavailableError(RuntimeError):
@@ -216,12 +440,17 @@ def paired_bootstrap(
     metric: str,
     samples: int = 2000,
     seed: int = 13,
+    *,
+    comet_model: str = DEFAULT_COMET_MODEL,
+    comet_device: str = "cpu",
 ) -> dict:
     """Sentence-paired bootstrap of ``metric(a) - metric(b)``.
 
     Supported metrics are ``"laal"`` (``None`` values are skipped),
     ``"bleu"`` (per-sentence `corpus_bleu`; raises `MetricUnavailableError` when
-    BLEU is unavailable), ``"completion_s"``, and ``"read_fraction"``.
+    BLEU is unavailable), ``"comet"`` (per-sentence COMET through the delegated
+    `comet_score`; raises when COMET is unavailable or still downloading),
+    ``"completion_s"``, and ``"read_fraction"``.
 
     Returns the point estimate (mean paired difference), the 2.5/97.5 percentile
     bootstrap interval, and the number of paired sentences actually used. When
@@ -241,6 +470,36 @@ def paired_bootstrap(
             _sentence_bleu(a, cache) - _sentence_bleu(b, cache)
             for a, b in trace_pairs
         ]
+    elif metric == "comet":
+        arm_a = [(a.hypothesis, a.source, a.reference) for a, _b in trace_pairs]
+        arm_b = [(b.hypothesis, b.source, b.reference) for _a, b in trace_pairs]
+        result_a = comet_score(
+            [row[0] for row in arm_a],
+            [row[1] for row in arm_a],
+            [row[2] for row in arm_a],
+            comet_model,
+            comet_device,
+        )
+        result_b = comet_score(
+            [row[0] for row in arm_b],
+            [row[1] for row in arm_b],
+            [row[2] for row in arm_b],
+            comet_model,
+            comet_device,
+        )
+        for label, result in (("a", result_a), ("b", result_b)):
+            if result.get("status") != "ok":
+                raise MetricUnavailableError(
+                    f"COMET is unavailable for arm {label}: "
+                    f"{result.get('reason', result.get('status', 'unknown'))}"
+                )
+        differences = [
+            float(score_a) - float(score_b)
+            for score_a, score_b in zip(
+                result_a.get("sentence_scores", []),
+                result_b.get("sentence_scores", []),
+            )
+        ]
     elif metric in _NUMERIC_METRICS:
         differences = [
             float(getattr(a, metric)) - float(getattr(b, metric))
@@ -249,7 +508,7 @@ def paired_bootstrap(
     else:
         raise ValueError(
             f"paired_bootstrap does not know metric {metric!r}; use 'laal', "
-            "'bleu', 'completion_s', or 'read_fraction'"
+            "'bleu', 'comet', 'completion_s', or 'read_fraction'"
         )
 
     n = len(differences)

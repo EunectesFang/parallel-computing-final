@@ -102,7 +102,23 @@ class CounterfactualLabeler:
     The last two paths need a tokenizer as well; without one the labeler raises
     `RuntimeError` rather than returning an empty pool that would silently mark
     every write as a no-emit.
+
+    `candidate_mode` controls how candidates are drawn:
+
+    * ``"per_candidate"`` (default) calls ``predictor.sample(observed, 1,
+      horizon, seed + i)`` once per candidate, exactly like
+      `ControlledRuntime.predict`. The labeled action's return distribution is
+      then the distribution the runtime actually executes.
+    * ``"batched"`` is the legacy ablation: one ``num_return_sequences=max_b``
+      call (or one ``sample_token_rows``) for the whole pool. It is cheaper but
+      can draw a different distribution than the runtime.
+
+    When `per_candidate` is requested but the predictor has no ``sample``
+    method, the labeler falls back to the batched paths and records the actual
+    mode it used.
     """
+
+    CANDIDATE_MODES = ("per_candidate", "batched")
 
     def __init__(
         self,
@@ -110,7 +126,21 @@ class CounterfactualLabeler:
         translator,
         cfg: ControllerConfig,
         timer=None,
+        candidate_mode: str = "per_candidate",
     ) -> None:
+        mode = str(candidate_mode)
+        if mode not in self.CANDIDATE_MODES:
+            raise ValueError(
+                f"candidate_mode must be one of {self.CANDIDATE_MODES}, got "
+                f"{mode!r}"
+            )
+        if mode == "per_candidate" and not callable(
+            getattr(predictor, "sample", None)
+        ):
+            # No per-candidate sampler: use the batched path, but report what
+            # actually ran instead of claiming parity the predictor cannot give.
+            mode = "batched"
+        self.candidate_mode = mode
         self.predictor = predictor
         self.translator = translator
         self.cfg = cfg if cfg is not None else ControllerConfig()
@@ -161,6 +191,32 @@ class CounterfactualLabeler:
             "returning an empty pool would silently label every write as a "
             "no-emit."
         )
+
+    def sample_text_candidates(
+        self, observed: str, count: int, horizon: int, seed: int
+    ) -> tuple[list[str], float] | None:
+        """Sample `count` continuations one seed at a time, like the runtime.
+
+        Candidate ``i`` uses ``predictor.sample(observed, 1, horizon,
+        seed + i)``, which is the exact call `ControlledRuntime.predict` makes.
+        Returns ``(continuations, pred_s)`` where `pred_s` is the summed stage
+        time, or ``None`` when the predictor has no ``sample`` method.
+        """
+        sample = getattr(self.predictor, "sample", None)
+        if not callable(sample):
+            return None
+        continuations: list[str] = []
+        seconds = 0.0
+        for index in range(int(count)):
+            batch, elapsed = self.runtime._timed(
+                "pred",
+                lambda sample_seed=int(seed) + index: sample(
+                    observed, 1, int(horizon), sample_seed
+                ),
+            )
+            continuations.extend(str(text) for text in (batch or []))
+            seconds += float(elapsed)
+        return continuations, seconds
 
     def _generate_token_rows(
         self, observed: str, max_b: int, max_h: int, seed: int
@@ -290,21 +346,6 @@ class CounterfactualLabeler:
 
         outcomes: dict[Action, ActionOutcome] = {}
         if write_actions:
-            max_b = max(int(action.branches) for action in write_actions)
-            max_h = max(int(action.horizon) for action in write_actions)
-
-            rows, pred_s = self.runtime._timed(
-                "pred",
-                lambda: self.sample_candidates(observed, max_b, max_h, seed),
-            )
-            if len(rows) < max_b:
-                raise RuntimeError(
-                    f"sample_candidates returned {len(rows)} rows but the "
-                    f"largest action needs {max_b}; a (b, h) label must be "
-                    "voted over exactly b candidates, not a shortened pool"
-                )
-            oracle = self.oracle_words(source, committed_tuple)
-
             # One translation per unique horizon, using that horizon's maximum
             # branch budget. Smaller-b actions reuse the prefix of the output
             # pool, so they never trigger a second translate call.
@@ -313,15 +354,63 @@ class CounterfactualLabeler:
                 by_horizon.setdefault(int(action.horizon), []).append(action)
 
             prefix = " ".join(committed_tuple)
+            per_candidate = self.candidate_mode == "per_candidate"
+            oracle: tuple[str, ...] | None = None
+            batched_rows: list[list[int]] = []
+            batched_pred_s = 0.0
+            if not per_candidate:
+                max_b = max(int(action.branches) for action in write_actions)
+                max_h = max(int(action.horizon) for action in write_actions)
+                batched_rows, batched_pred_s = self.runtime._timed(
+                    "pred",
+                    lambda: self.sample_candidates(observed, max_b, max_h, seed),
+                )
+                if len(batched_rows) < max_b:
+                    raise RuntimeError(
+                        f"sample_candidates returned {len(batched_rows)} rows "
+                        f"but the largest action needs {max_b}; a (b, h) label "
+                        "must be voted over exactly b candidates, not a "
+                        "shortened pool"
+                    )
+
             for horizon in sorted(by_horizon):
                 group = by_horizon[horizon]
                 need = max(int(action.branches) for action in group)
-                requests = [
-                    self.runtime._request_text(
-                        observed, self._decode_tokens(row, horizon)
+                if per_candidate:
+                    sampled = self.sample_text_candidates(
+                        observed, need, horizon, seed
                     )
-                    for row in rows[:need]
-                ]
+                    if sampled is None:  # pragma: no cover - constructor guards
+                        raise RuntimeError(
+                            "per_candidate mode needs predictor.sample"
+                        )
+                    continuations, pred_s = sampled
+                    if len(continuations) < need:
+                        raise RuntimeError(
+                            f"predictor.sample returned {len(continuations)} "
+                            f"continuations but the largest action at horizon "
+                            f"{horizon} needs {need}; a (b, h) label must be "
+                            "voted over exactly b candidates, not a shortened "
+                            "pool"
+                        )
+                    requests = [
+                        self.runtime._request_text(observed, text)
+                        for text in continuations[:need]
+                    ]
+                else:
+                    pred_s = batched_pred_s
+                    requests = [
+                        self.runtime._request_text(
+                            observed, self._decode_tokens(row, horizon)
+                        )
+                        for row in batched_rows[:need]
+                    ]
+
+                if oracle is None:
+                    # Timed after the first candidate pool is drawn, before the
+                    # first candidate translation, so the stage order stays
+                    # sample -> oracle -> translate.
+                    oracle = self.oracle_words(source, committed_tuple)
                 outputs, mt_s = self.runtime.translate(requests, prefix)
                 outputs = list(outputs)
                 if len(outputs) < need:
@@ -348,7 +437,7 @@ class CounterfactualLabeler:
                         emitted=emitted,
                         no_emit=emitted == 0,
                         next_committed=committed_tuple + words,
-                        # pred_s is the single shared generation measurement;
+                        # pred_s is this horizon's generation measurement;
                         # mt_s is the max-b translation time for this horizon,
                         # shared by every b variant (cost-table approximation).
                         pred_s=float(pred_s),

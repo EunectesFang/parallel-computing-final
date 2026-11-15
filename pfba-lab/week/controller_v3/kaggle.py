@@ -69,9 +69,15 @@ from typing import Sequence
 from .action import READ, Action
 from .checkpoint import load_checkpoint, save_checkpoint
 from .config import ControllerConfig
-from .cost_model import MeasuredCostTable
-from .evaluator import summarize_traces
+from .cost_model import MeasuredCostTable, PipelineCostModel
+from .evaluator import (
+    MetricUnavailableError,
+    paired_bootstrap,
+    risk_calibration,
+    summarize_traces,
+)
 from .features import (
+    NUMERIC_FEATURES,
     FeatureBuilder,
     History,
     HistoryTracker,
@@ -79,11 +85,13 @@ from .features import (
     StateInput,
     advance_virtual_clock,
     estimate_length_ratio,
+    feature_diagnostics,
 )
 from .labeler import ActionOutcome, CounterfactualLabeler
 from .network import CAVCNetwork
+from .post_controller import PostController
 from .reward import RewardConfig, immediate_reward, terminal_reward
-from .rollout import RolloutTrace, run_rollout
+from .rollout import RolloutTrace, run_fixed_rollout, run_rollout
 from .runtime import ControlledRuntime, run_pfba
 from .targets import build_action_targets
 from .text_encoder import Vocab
@@ -117,12 +125,13 @@ TEST_OFFSET_FLOOR = 140
 DEFAULT_PREFLIGHT_LIMIT = 8
 DEFAULT_CONFIRM_LIMIT = 64
 
-# Bump whenever the `labels.jsonl` state/outcome schema changes. A resumable
-# dev run refuses a file written by an older schema instead of mixing a
-# multi-step successor with the current one-step successor. Format 3 fixes the
-# terminal proxy: the hypothesis must include the forced committed prefix,
-# because `oracle_words` returns only its continuation.
-LABEL_FORMAT = 3
+# Bump whenever the `labels.jsonl` state/outcome schema or candidate sampling
+# changes. A resumable dev run refuses a file written by an older schema
+# instead of mixing incompatible transitions. Format 3 fixed the terminal
+# proxy (the hypothesis includes the forced committed prefix). Format 4 records
+# `candidate_mode`: a per-candidate label pool and a batched pool must never be
+# appended into the same resumable file.
+LABEL_FORMAT = 4
 
 # Trajectory-coverage policy: READ with probability `DEFAULT_READ_PROB`,
 # otherwise the fixed write action. This is *not* the policy being learned; it
@@ -500,7 +509,7 @@ def calibrate_cost_records(
     translator_id: int | None = None,
     timer=None,
 ):
-    """Measure ``(predictor_id, translator_id, action, pred_s, mt_s)`` records.
+    """Measure cost records including the optional marginal wall time.
 
     Every write action is measured through `ControlledRuntime.execute`, which
     is the exact per-candidate runtime path: candidate ``i`` is sampled with
@@ -508,6 +517,13 @@ def calibrate_cost_records(
     for every action at one state, so smaller budgets are prefixes of larger
     ones. READ, when present in `actions`, is recorded with zero time; the
     measured table ignores READ because waiting is free by definition.
+
+    Records are ``(predictor_id, translator_id, action, pred_s, mt_s,
+    marginal_wall_s)``. `marginal_wall_s` is the incremental pipeline wall time
+    from the runtime's device schedule at that state; ``pred_s + mt_s`` is
+    serial compute and is never substituted for it. The device clocks reset
+    before each state because the actions there are alternatives, not a
+    sequence.
 
     At most `limit` sentences and `states_per_sentence` decision positions per
     sentence are measured. Returns ``(records, summary)``.
@@ -527,10 +543,10 @@ def calibrate_cost_records(
     action_list = tuple(actions)
     runtime = ControlledRuntime(predictor, translator, cfg, timer=timer)
 
-    per_action: dict[str, list[tuple[float, float]]] = {
+    per_action: dict[str, list[tuple[float, float, float]]] = {
         action.label: [] for action in action_list
     }
-    records: list[tuple[int, int, Action, float, float]] = []
+    records: list[tuple[int, int, Action, float, float, float]] = []
     used_sentences = 0
     used_states = 0
     sentence_list = list(sentences)
@@ -550,15 +566,29 @@ def calibrate_cost_records(
             seed = _step_seed(cfg, sentence_id, read_pos, split="calibration")
             for action in action_list:
                 if action.is_read:
-                    pred_s = mt_s = 0.0
+                    pred_s = mt_s = marginal_wall_s = 0.0
                 else:
+                    # The actions at one state are alternatives, so each is
+                    # measured from free devices rather than inheriting the
+                    # previous action's schedule.
+                    runtime.reset_timing()
                     result = runtime.execute(observed, committed, action, seed)
                     pred_s = float(result.pred_s)
                     mt_s = float(result.mt_s)
+                    # ControlledRuntime always reports a scheduled marginal;
+                    # the serial stage sum is never substituted for it.
+                    marginal_wall_s = float(result.marginal_wall_s)
                 records.append(
-                    (resolved_pid, resolved_tid, action, pred_s, mt_s)
+                    (
+                        resolved_pid,
+                        resolved_tid,
+                        action,
+                        pred_s,
+                        mt_s,
+                        marginal_wall_s,
+                    )
                 )
-                per_action[action.label].append((pred_s, mt_s))
+                per_action[action.label].append((pred_s, mt_s, marginal_wall_s))
             used_states += 1
 
     summary = {
@@ -572,8 +602,11 @@ def calibrate_cost_records(
         "per_action": {
             label: {
                 "n": len(values),
-                "pred_s_median": _median([pred for pred, _mt in values]),
-                "mt_s_median": _median([mt for _pred, mt in values]),
+                "pred_s_median": _median([value[0] for value in values]),
+                "mt_s_median": _median([value[1] for value in values]),
+                "marginal_wall_s_median": _median(
+                    [value[2] for value in values]
+                ),
             }
             for label, values in per_action.items()
         },
@@ -581,6 +614,8 @@ def calibrate_cost_records(
             "Ids are only meaningful with calibration records measured for "
             "the same adapter pair.",
             "READ is free and is ignored by MeasuredCostTable.",
+            "marginal_wall_s is scheduled pipeline wall time; pred_s + mt_s "
+            "is serial compute, not pipeline wall time.",
         ],
     }
     return records, summary
@@ -589,40 +624,51 @@ def calibrate_cost_records(
 # ----------------------------------------------------------------------
 # Serialisation helpers
 # ----------------------------------------------------------------------
-def _serialize_cost_records(
-    records: Sequence[tuple[int, int, Action, float, float]],
-) -> list[list]:
-    return [
-        [
+def _serialize_cost_records(records: Sequence[tuple]) -> list[list]:
+    serialized: list[list] = []
+    for record in records:
+        values = tuple(record)
+        if len(values) not in (5, 6):
+            raise ValueError("cost records must have five or six fields")
+        predictor_id, translator_id, action, pred_s, mt_s = values[:5]
+        item = [
             int(predictor_id),
             int(translator_id),
             [int(action.branches), int(action.horizon)],
             float(pred_s),
             float(mt_s),
         ]
-        for predictor_id, translator_id, action, pred_s, mt_s in records
-    ]
+        if len(values) == 6:
+            item.append(float(values[5]))
+        serialized.append(item)
+    return serialized
 
 
-def _deserialize_cost_records(raw) -> list[tuple[int, int, Action, float, float]]:
-    records: list[tuple[int, int, Action, float, float]] = []
+def _deserialize_cost_records(raw) -> list[tuple]:
+    records: list[tuple] = []
     for item in raw or []:
-        predictor_id, translator_id, action_pair, pred_s, mt_s = item
-        records.append(
-            (
-                int(predictor_id),
-                int(translator_id),
-                Action(int(action_pair[0]), int(action_pair[1])),
-                float(pred_s),
-                float(mt_s),
+        if len(item) not in (5, 6):
+            raise ValueError(
+                "cost record must be [predictor_id, translator_id, "
+                "[branches, horizon], pred_s, mt_s[, marginal_wall_s]]"
             )
+        predictor_id, translator_id, action_pair, pred_s, mt_s = item[:5]
+        record = (
+            int(predictor_id),
+            int(translator_id),
+            Action(int(action_pair[0]), int(action_pair[1])),
+            float(pred_s),
+            float(mt_s),
         )
+        if len(item) == 6:
+            record = (*record, float(item[5]))
+        records.append(record)
     return records
 
 
 def _write_cost_records(
     path: Path,
-    records: Sequence[tuple[int, int, Action, float, float]],
+    records: Sequence[tuple],
     summary: dict,
 ) -> None:
     _write_json(
@@ -631,7 +677,8 @@ def _write_cost_records(
             "records": _serialize_cost_records(records),
             "summary": summary,
             "format": "records are [predictor_id, translator_id, "
-            "[branches, horizon], pred_s, mt_s]",
+            "[branches, horizon], pred_s, mt_s, marginal_wall_s]; the last "
+            "field is optional on older files",
         },
     )
 
@@ -1087,6 +1134,7 @@ def label_sentence(
         "reference": reference,
         "stride": 1,
         "label_format": LABEL_FORMAT,
+        "candidate_mode": getattr(labeler, "candidate_mode", "per_candidate"),
         "behavior": {
             "read_prob": float(read_prob),
             "fixed_action": behavior_write.label,
@@ -1295,6 +1343,217 @@ def _skipped_training(n_samples: int) -> dict:
     }
 
 
+class _RecordingBuilder:
+    """Wrap a `FeatureBuilder` and keep every online vector it builds.
+
+    `run_rollout` builds one vector per decision through this wrapper, which
+    gives the serving distribution for `feature_stats.json` without storing
+    features in the trace.
+    """
+
+    def __init__(self, builder: FeatureBuilder) -> None:
+        self.builder = builder
+        self.vectors: list = []
+
+    def build(self, *args, **kwargs):
+        vector = self.builder.build(*args, **kwargs)
+        self.vectors.append(vector)
+        return vector
+
+    def __getattr__(self, name):
+        return getattr(self.builder, name)
+
+
+def _split_calibration_targets(targets: Sequence, every: int = 5):
+    """Deterministically hold out whole state groups for risk calibration.
+
+    Targets are grouped by `state_key` so a ranking group is never split across
+    training and calibration. `every` selects sorted state keys ``0, every,
+    2*every, ...``. When fewer than two groups exist, nothing is held out and
+    the caller reports calibration as unavailable rather than in-sample.
+    """
+    materialized = list(targets)
+    keys = sorted({str(target.state_key) for target in materialized})
+    if len(keys) < 2:
+        return materialized, []
+    holdout = set(keys[:: int(every)])
+    train = [target for target in materialized if target.state_key not in holdout]
+    held_out = [
+        target for target in materialized if target.state_key in holdout
+    ]
+    if not train or not held_out:
+        return materialized, []
+    return train, held_out
+
+
+def _paired_metrics(
+    learned: Sequence[RolloutTrace],
+    fixed: Sequence[RolloutTrace],
+    *,
+    include_comet: bool = False,
+) -> dict:
+    """Sentence-paired learned-vs-fixed metric differences.
+
+    BLEU/LAAL/completion intervals come from `evaluator.paired_bootstrap`.
+    A metric that cannot be computed carries ``status``/``reason`` and no
+    invented point estimate. COMET is opt-in because it downloads weights;
+    when disabled the result is explicitly ``"skipped"``.
+    """
+    metrics: dict[str, dict] = {}
+    for name in ("bleu", "laal", "completion_s"):
+        try:
+            result = dict(paired_bootstrap(learned, fixed, name))
+            if int(result.get("n", 0)) == 0:
+                result["status"] = "unavailable"
+                result["reason"] = "no paired sentences"
+            else:
+                result["status"] = "ok"
+        except MetricUnavailableError as exc:
+            result = {
+                "metric": name,
+                "status": "unavailable",
+                "reason": str(exc),
+                "point": None,
+                "low": None,
+                "high": None,
+                "n": 0,
+            }
+        except Exception as exc:  # pragma: no cover - defensive
+            result = {
+                "metric": name,
+                "status": "error",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "point": None,
+                "low": None,
+                "high": None,
+                "n": 0,
+            }
+        metrics[name] = result
+
+    if include_comet:
+        try:
+            comet = dict(paired_bootstrap(learned, fixed, "comet"))
+            if int(comet.get("n", 0)) == 0:
+                comet["status"] = "unavailable"
+                comet["reason"] = "no paired sentences"
+            else:
+                comet["status"] = "ok"
+        except MetricUnavailableError as exc:
+            comet = {
+                "metric": "comet",
+                "status": "unavailable",
+                "reason": str(exc),
+                "point": None,
+                "low": None,
+                "high": None,
+                "n": 0,
+            }
+        metrics["comet"] = comet
+    else:
+        metrics["comet"] = {
+            "metric": "comet",
+            "status": "skipped",
+            "reason": "COMET is opt-in because loading it downloads weights",
+            "point": None,
+            "low": None,
+            "high": None,
+            "n": 0,
+        }
+
+    return {
+        "learned": "controller",
+        "fixed": "(4,6)",
+        "n_learned": len(learned),
+        "n_fixed": len(fixed),
+        "metrics": metrics,
+    }
+
+
+def _validate_feature_stats_payload(stats, source: str) -> None:
+    """Check a stored `feature_stats` mapping has one entry per feature."""
+    if not isinstance(stats, dict):
+        raise ValueError(f"{source} has malformed feature_stats")
+    features = stats.get("features")
+    if isinstance(features, dict):
+        names = list(features)
+    elif isinstance(features, (list, tuple)):
+        names = list(features)
+    else:
+        raise ValueError(f"{source} feature_stats has no per-feature table")
+    if len(names) != len(NUMERIC_FEATURES):
+        raise ValueError(
+            f"{source} feature_stats covers {len(names)} features but "
+            f"NUMERIC_FEATURES has {len(NUMERIC_FEATURES)}"
+        )
+    if isinstance(features, dict) and set(features) != set(NUMERIC_FEATURES):
+        raise ValueError(
+            f"{source} feature_stats feature names do not match "
+            "NUMERIC_FEATURES"
+        )
+
+
+def _validate_checkpoint_metadata(payload, model_pair: dict) -> None:
+    """Validate stored pair/vocab/feature metadata against resolved adapters.
+
+    A checkpoint that was trained must carry all three. A model pair mismatch,
+    a missing vocabulary, or a feature-stat shape mismatch raises instead of
+    silently evaluating with the wrong embedding ids or rebuilding a
+    test-derived vocabulary. Untrained diagnostic checkpoints may omit the
+    pair and feature stats, but still must store their vocabulary.
+    """
+    extra = dict(payload.get("extra") or {})
+    trained = bool(extra.get("trained", False))
+    source = "checkpoint"
+
+    stored_pair = extra.get("model_pair")
+    if stored_pair is None:
+        if trained:
+            raise ValueError(
+                f"{source} is trained but has no model_pair metadata; it cannot "
+                "be validated against the resolved adapters"
+            )
+    elif not isinstance(stored_pair, dict):
+        raise ValueError(f"{source} model_pair metadata must be a mapping")
+    else:
+        expected = {
+            "predictor": model_pair.get("predictor"),
+            "translator": model_pair.get("translator"),
+            "predictor_id": int(model_pair.get("predictor_id", 0)),
+            "translator_id": int(model_pair.get("translator_id", 0)),
+        }
+        for key, value in expected.items():
+            if key not in stored_pair:
+                if trained:
+                    raise ValueError(
+                        f"{source} model_pair metadata is missing {key!r}"
+                    )
+                continue
+            stored = stored_pair[key]
+            if key in ("predictor_id", "translator_id"):
+                stored = int(stored)
+            if stored != value:
+                raise ValueError(
+                    f"{source} model_pair mismatch for {key!r}: stored "
+                    f"{stored!r} vs resolved {value!r}; refusing to evaluate "
+                    "with a different adapter pair"
+                )
+
+    if not extra.get("vocab"):
+        raise ValueError(
+            f"{source} has no stored vocabulary; refusing to rebuild a "
+            "test-derived vocabulary for evaluation"
+        )
+
+    feature_stats = extra.get("feature_stats")
+    if feature_stats is None:
+        if trained:
+            raise ValueError(
+                f"{source} is trained but has no feature_stats metadata"
+            )
+    else:
+        _validate_feature_stats_payload(feature_stats, source)
+
+
 def _train_and_write(
     *,
     mode: str,
@@ -1320,6 +1579,11 @@ def _train_and_write(
     extra_summary: dict | None = None,
     deadline: float | None = None,
     initial_stopped_reason: str | None = None,
+    post_controller_enabled: bool = False,
+    candidate_mode: str = "per_candidate",
+    calibrate_risk: bool = False,
+    evaluate_fixed: bool = False,
+    include_comet: bool = False,
 ) -> dict:
     """Train, checkpoint, roll out, and write every artifact for a mode.
 
@@ -1335,32 +1599,52 @@ def _train_and_write(
     `model_pair["predictor_id"]` / ``["translator_id"]`` are injected into
     every rollout feature vector so the network embedding and the cost lookup
     use the same adapter pair as training and calibration.
+
+    `post_controller_enabled` constructs a `PostController` and passes it to
+    every learned rollout. `calibrate_risk` holds out whole state groups from
+    training and reports Brier/ECE calibration for the risk heads on them.
+    `evaluate_fixed` also rolls out the fixed `(4, 6)` baseline on the same
+    runtime path and writes sentence-paired intervals to ``paired.json``.
     """
     stopped_reason = initial_stopped_reason
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "checkpoint.pt"
     mean, std = _feature_stats(states)
+    training_feature_stats = feature_diagnostics(states)
+
+    train_targets = list(targets)
+    calibration_targets: list = []
+    if calibrate_risk:
+        train_targets, calibration_targets = _split_calibration_targets(targets)
 
     trained = False
     if deadline is not None and time.perf_counter() >= deadline:
-        training = _skipped_training(len(targets))
+        training = _skipped_training(len(train_targets))
         stopped_reason = "deadline"
     else:
         trainer = CAVCTrainer(network, cfg, cost_model)
-        training = trainer.fit(targets)
+        training = trainer.fit(train_targets)
         trained = True
 
     training_extra = {
         "mode": mode,
         "split": split,
         "training": training,
-        "n_targets": len(targets),
+        "n_targets": len(train_targets),
         "trained": trained,
         # Frozen confirmation must rebuild the same word ids; store the
         # vocabulary and the training length ratio so a test sentence cannot
         # silently remap the text-encoder inputs.
         "vocab": list(vocab.id_to_token),
         "length_ratio": float(builder.rho),
+        # Confirmation validates the adapter pair and feature diagnostics
+        # against the resolved runtime instead of trusting a silent fallback.
+        "model_pair": dict(model_pair),
+        "feature_stats": training_feature_stats,
+        "candidate_mode": candidate_mode,
+        "post_controller": (
+            "enabled" if post_controller_enabled else "disabled"
+        ),
     }
     if trained:
         metadata = save_checkpoint(
@@ -1380,7 +1664,13 @@ def _train_and_write(
 
     predictor_id = int(model_pair.get("predictor_id", 0))
     translator_id = int(model_pair.get("translator_id", 0))
+    post_controller = PostController() if post_controller_enabled else None
+    # Rollout scores actions with the pipeline marginal, never with the serial
+    # pred_s + mt_s sum. The measured table stays the base estimate.
+    pipeline_cost = PipelineCostModel(cost_model) if cost_model is not None else None
+    recording_builder = _RecordingBuilder(builder)
     traces: list[RolloutTrace] = []
+    fixed_traces: list[RolloutTrace] = []
     for sentence in _with_split(rollout_sentences, split):
         if deadline is not None and time.perf_counter() >= deadline:
             stopped_reason = "deadline"
@@ -1391,20 +1681,39 @@ def _train_and_write(
                 predictor,
                 translator,
                 network,
-                builder,
-                cost_model,
+                recording_builder,
+                pipeline_cost,
                 cfg,
                 timer=timer,
+                post_controller=post_controller,
                 predictor_id=predictor_id,
                 translator_id=translator_id,
             )
         )
+        if evaluate_fixed:
+            fixed_traces.append(
+                run_fixed_rollout(
+                    sentence,
+                    predictor,
+                    translator,
+                    builder,
+                    pipeline_cost,
+                    cfg,
+                    predictor_id,
+                    translator_id,
+                    timer=timer,
+                )
+            )
     rollout_summary = _rollout_summary(traces)
+    fixed_summary = _rollout_summary(fixed_traces) if evaluate_fixed else None
 
     config_path = output_dir / "config.json"
     cost_path = output_dir / "cost_records.json"
     traces_path = output_dir / "traces.jsonl"
+    fixed_traces_path = output_dir / "traces_fixed.jsonl"
     summary_path = output_dir / "summary.json"
+    feature_stats_path = output_dir / "feature_stats.json"
+    paired_path = output_dir / "paired.json"
     _write_json(
         config_path,
         _config_payload(
@@ -1418,6 +1727,43 @@ def _train_and_write(
     )
     _write_cost_records(cost_path, cost_model.records, cost_summary)
     _write_traces(traces_path, traces)
+
+    # Train-serve feature diagnostics: the serving vectors come from the
+    # learned rollout's online builder, the reference is the training states.
+    serving_vectors = recording_builder.vectors
+    feature_payload = {
+        "candidate_mode": candidate_mode,
+        "training": training_feature_stats,
+        "serving": feature_diagnostics(
+            serving_vectors, reference=states
+        ),
+        "n_serving_vectors": len(serving_vectors),
+    }
+    _write_json(feature_stats_path, feature_payload)
+    for warning in feature_payload["serving"].get("warnings", []):
+        print(f"[cavc] feature warning: {warning}", flush=True)
+
+    paired_payload = None
+    if evaluate_fixed:
+        _write_traces(fixed_traces_path, fixed_traces)
+        paired_payload = _paired_metrics(
+            traces, fixed_traces, include_comet=include_comet
+        )
+        _write_json(paired_path, paired_payload)
+
+    risk_payload = None
+    if calibrate_risk:
+        if calibration_targets:
+            risk_payload = risk_calibration(network, calibration_targets)
+        else:
+            risk_payload = {
+                "status": "unavailable",
+                "reason": "not enough state groups to hold out calibration "
+                "targets",
+                "n": 0,
+                "error_risk": {},
+                "no_emit": {},
+            }
 
     summary = {
         "mode": mode,
@@ -1435,8 +1781,15 @@ def _train_and_write(
         "n_label_rows": len(label_rows) if label_rows is not None else None,
         "n_states": len(states),
         "n_targets": len(targets),
+        "n_train_targets": len(train_targets),
+        "n_risk_calibration_targets": len(calibration_targets),
         "training": training,
         "trained": trained,
+        "candidate_mode": candidate_mode,
+        "post_controller": (
+            "enabled" if post_controller_enabled else "disabled"
+        ),
+        "risk_calibration": risk_payload,
         "stopped_reason": stopped_reason,
         "checkpoint": (
             {
@@ -1458,11 +1811,18 @@ def _train_and_write(
         ),
         "cost": cost_summary,
         "rollout": rollout_summary,
+        "rollout_fixed": fixed_summary,
+        "paired": paired_payload,
         "artifacts": {
             "summary": str(summary_path),
             "traces": str(traces_path),
+            "traces_fixed": (
+                str(fixed_traces_path) if evaluate_fixed else None
+            ),
             "config": str(config_path),
             "cost_records": str(cost_path),
+            "feature_stats": str(feature_stats_path),
+            "paired": str(paired_path) if evaluate_fixed else None,
             "checkpoint": (
                 str(checkpoint_path) if metadata is not None else None
             ),
@@ -1485,6 +1845,21 @@ def _train_and_write(
         f"COMET={comet.get('status', 'unknown')}",
         flush=True,
     )
+    print(
+        f"[cavc] post_controller={summary['post_controller']} "
+        f"candidate_mode={candidate_mode} risk_calibration="
+        f"{(risk_payload or {}).get('status', 'not_run')}",
+        flush=True,
+    )
+    if evaluate_fixed and paired_payload is not None:
+        print(
+            "[cavc] paired learned-vs-fixed metrics: "
+            + ", ".join(
+                f"{name}={value.get('status')}"
+                for name, value in paired_payload["metrics"].items()
+            ),
+            flush=True,
+        )
     if checkpoint_status == "not_written":
         print(
             "[cavc] no checkpoint written: training was skipped before the "
@@ -1517,6 +1892,8 @@ def run_preflight(
     local_files_only: bool = False,
     trust_remote_code: bool = False,
     read_prob: float = DEFAULT_READ_PROB,
+    post_controller: bool = False,
+    candidate_mode: str = "per_candidate",
 ) -> dict:
     """Wire the real pipeline end to end on a few dev sentences.
 
@@ -1559,7 +1936,13 @@ def run_preflight(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
     builder, network, vocab = _components(cfg, sentences)
-    labeler = CounterfactualLabeler(predictor, translator, cfg, timer=timer)
+    labeler = CounterfactualLabeler(
+        predictor,
+        translator,
+        cfg,
+        timer=timer,
+        candidate_mode=candidate_mode,
+    )
 
     cal_limit = min(8, max(1, int(limit))) if int(limit) > 0 else 8
     cost_records, cost_summary = calibrate_cost_records(
@@ -1605,6 +1988,14 @@ def run_preflight(
         "Dev sentences only; no test sentence is loaded.",
         "BLEU/COMET report the status returned by run_pfba; no score is "
         "invented.",
+        (
+            "Post controller enabled; its no-emit sigmoid is an uncalibrated "
+            "heuristic input, not a hard safety threshold."
+            if post_controller
+            else "Post controller disabled; risk heads are training-only "
+            "auxiliaries and no uncalibrated sigmoid is used as a hard safety "
+            "threshold."
+        ),
     ]
     return _train_and_write(
         mode="preflight",
@@ -1627,9 +2018,12 @@ def run_preflight(
         rollout_sentences=sentences[: max(0, int(rollout_sentences))],
         model_pair=model_pair,
         notes=notes,
+        post_controller_enabled=bool(post_controller),
+        candidate_mode=labeler.candidate_mode,
         extra_summary={
             "preflight": True,
             "label_format": LABEL_FORMAT,
+            "candidate_mode": labeler.candidate_mode,
             "behavior": {
                 "read_prob": float(read_prob),
                 "fixed_action": FIXED_BEHAVIOR_WRITE.label,
@@ -1657,6 +2051,9 @@ def run_dev(
     local_files_only: bool = False,
     trust_remote_code: bool = False,
     read_prob: float = DEFAULT_READ_PROB,
+    post_controller: bool = False,
+    candidate_mode: str = "per_candidate",
+    include_comet: bool = False,
 ) -> dict:
     """Label dev train buckets 2-9, train, and roll out dev holdout bucket 1.
 
@@ -1729,7 +2126,13 @@ def run_dev(
     # Train-only vocabulary: holdout bucket 1 must not contribute entries, or
     # its words would leak into the frozen text encoder.
     builder, network, vocab = _components(cfg, train_sentences)
-    labeler = CounterfactualLabeler(predictor, translator, cfg, timer=timer)
+    labeler = CounterfactualLabeler(
+        predictor,
+        translator,
+        cfg,
+        timer=timer,
+        candidate_mode=candidate_mode,
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1747,6 +2150,18 @@ def run_dev(
             f"(expected label_format={LABEL_FORMAT}). Move it aside so the "
             "stride=1 one-step labels are regenerated instead of mixing "
             "multi-step successors with one-step ones."
+        )
+    recorded_modes = {
+        str(row.get("candidate_mode"))
+        for row in existing_rows
+        if row.get("candidate_mode")
+    }
+    if recorded_modes and recorded_modes != {labeler.candidate_mode}:
+        raise ValueError(
+            f"{labels_path} was labelled with candidate_mode "
+            f"{sorted(recorded_modes)} but this run uses "
+            f"{labeler.candidate_mode!r}. Move the file aside so one run never "
+            "mixes per-candidate and batched label distributions."
         )
     done = {str(row.get("sentence_id", "")) for row in existing_rows}
 
@@ -1794,6 +2209,8 @@ def run_dev(
             "mode": "dev",
             "stride": stride,
             "label_format": LABEL_FORMAT,
+            "candidate_mode": labeler.candidate_mode,
+            "post_controller": "enabled" if post_controller else "disabled",
             "read_prob": float(read_prob),
             "fixed_action": FIXED_BEHAVIOR_WRITE.label,
             "newly_labeled": newly_labeled,
@@ -1814,6 +2231,10 @@ def run_dev(
                 "n_label_rows": 0,
                 "n_targets": 0,
                 "label_format": LABEL_FORMAT,
+                "candidate_mode": labeler.candidate_mode,
+                "post_controller": (
+                    "enabled" if post_controller else "disabled"
+                ),
                 "behavior": {
                     "read_prob": float(read_prob),
                     "fixed_action": FIXED_BEHAVIOR_WRITE.label,
@@ -1888,6 +2309,16 @@ def run_dev(
         "internal development estimate, not a pristine test result.",
         f"Test slice starts at test:{TEST_OFFSET_FLOOR:04d}; no test sentence "
         "is loaded here.",
+        "The fixed (4,6) baseline runs on the same runtime/sampling path and "
+        "is compared with sentence-paired bootstrap intervals.",
+        (
+            "Post controller enabled; its no-emit sigmoid is an uncalibrated "
+            "heuristic input, not a hard safety threshold."
+            if post_controller
+            else "Post controller disabled; risk heads are training-only "
+            "auxiliaries and no uncalibrated sigmoid is used as a hard safety "
+            "threshold."
+        ),
     ]
     return _train_and_write(
         mode="dev",
@@ -1912,9 +2343,15 @@ def run_dev(
         notes=notes,
         deadline=deadline,
         initial_stopped_reason=stopped_reason,
+        post_controller_enabled=bool(post_controller),
+        candidate_mode=labeler.candidate_mode,
+        calibrate_risk=True,
+        evaluate_fixed=True,
+        include_comet=include_comet,
         extra_summary={
             "stride": stride,
             "label_format": LABEL_FORMAT,
+            "candidate_mode": labeler.candidate_mode,
             "behavior": {
                 "read_prob": float(read_prob),
                 "fixed_action": FIXED_BEHAVIOR_WRITE.label,
@@ -1950,6 +2387,9 @@ def run_confirm(
     translator_name: str = "small",
     local_files_only: bool = False,
     trust_remote_code: bool = False,
+    post_controller: bool = False,
+    calibration_targets: Sequence | None = None,
+    include_comet: bool = False,
 ) -> dict:
     """Evaluate a frozen controller on the clean test slice; never tune.
 
@@ -2013,6 +2453,20 @@ def run_confirm(
     tid = _pair_id(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
+    model_pair = {
+        "predictor": predictor_name,
+        "translator": translator_name,
+        "predictor_id": pid,
+        "translator_id": tid,
+        "predictor_device": predictor_devices[0],
+        "translator_device": predictor_devices[1],
+    }
+    if payload is not None:
+        # Validate the stored pair/vocab/feature metadata before any weights
+        # are loaded, so a mismatch cannot silently remap the text ids.
+        _validate_checkpoint_metadata(payload, model_pair)
+
+    vocab_source = "supplied"
     if builder is None or network is None:
         frozen_vocab, frozen_ratio = (
             _frozen_vocab(payload) if payload is not None else (None, None)
@@ -2021,6 +2475,7 @@ def run_confirm(
             # A dev-trained checkpoint must see the same word ids at test
             # time, so the stored vocabulary and length ratio win over one
             # rebuilt from the test sentences.
+            vocab_source = "checkpoint"
             pairs = [
                 (
                     str(_field(sentence, "source", "")),
@@ -2043,7 +2498,18 @@ def run_confirm(
                 src_vocab_size=len(frozen_vocab),
                 tgt_vocab_size=len(frozen_vocab),
             )
+        elif payload is not None:
+            # `_validate_checkpoint_metadata` already rejects a checkpoint
+            # without a stored vocabulary; keep this as a hard stop so an
+            # evaluation vocabulary can never be rebuilt from test sentences.
+            raise ValueError(
+                f"checkpoint {checkpoint_path} has no stored vocabulary; "
+                "refusing to rebuild a test-derived vocabulary"
+            )
         else:
+            # No checkpoint means an untrained diagnostic; the summary records
+            # that its vocabulary came from the evaluated sentences.
+            vocab_source = "evaluation_sentences_diagnostic"
             built_builder, built_network, _built_vocab = _components(
                 cfg, sentences
             )
@@ -2071,6 +2537,8 @@ def run_confirm(
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    post = PostController() if post_controller else None
+    pipeline_cost = PipelineCostModel(cost_model)
     traces = [
         run_rollout(
             sentence,
@@ -2078,26 +2546,50 @@ def run_confirm(
             translator,
             network,
             builder,
-            cost_model,
+            pipeline_cost,
             cfg,
             timer=timer,
+            post_controller=post,
             predictor_id=pid,
             translator_id=tid,
         )
         for sentence in _with_split(sentences, "test")
     ]
+    fixed_traces = [
+        run_fixed_rollout(
+            sentence,
+            predictor,
+            translator,
+            builder,
+            pipeline_cost,
+            cfg,
+            pid,
+            tid,
+            timer=timer,
+        )
+        for sentence in _with_split(sentences, "test")
+    ]
     rollout_summary = _rollout_summary(traces)
+    fixed_summary = _rollout_summary(fixed_traces)
+    paired_payload = _paired_metrics(
+        traces, fixed_traces, include_comet=include_comet
+    )
+    if calibration_targets:
+        risk_payload = risk_calibration(network, calibration_targets)
+    else:
+        risk_payload = {
+            "status": "unavailable",
+            "reason": "run_confirm has no held-out ActionTargets; pass "
+            "calibration_targets to calibrate the risk heads",
+            "n": 0,
+            "error_risk": {},
+            "no_emit": {},
+        }
 
-    model_pair = {
-        "predictor": predictor_name,
-        "translator": translator_name,
-        "predictor_id": pid,
-        "translator_id": tid,
-        "predictor_device": predictor_devices[0],
-        "translator_device": predictor_devices[1],
-    }
     config_path = output_dir / "config.json"
     traces_path = output_dir / "traces.jsonl"
+    fixed_traces_path = output_dir / "traces_fixed.jsonl"
+    paired_path = output_dir / "paired.json"
     summary_path = output_dir / "summary.json"
     _write_json(
         config_path,
@@ -2108,6 +2600,8 @@ def run_confirm(
         ),
     )
     _write_traces(traces_path, traces)
+    _write_traces(fixed_traces_path, fixed_traces)
+    _write_json(paired_path, paired_payload)
     summary = {
         "mode": "confirm",
         "split": "test",
@@ -2119,6 +2613,9 @@ def run_confirm(
         "trained": checkpoint_trained,
         "frozen_config": True,
         "seed": int(cfg.seed),
+        "post_controller": "enabled" if post_controller else "disabled",
+        "risk_calibration": risk_payload,
+        "vocab_source": vocab_source,
         "git_commit": (
             loaded_metadata.get("git_commit")
             if loaded_metadata is not None
@@ -2131,9 +2628,13 @@ def run_confirm(
             str(checkpoint_path) if checkpoint_path is not None else None
         ),
         "rollout": rollout_summary,
+        "rollout_fixed": fixed_summary,
+        "paired": paired_payload,
         "artifacts": {
             "summary": str(summary_path),
             "traces": str(traces_path),
+            "traces_fixed": str(fixed_traces_path),
+            "paired": str(paired_path),
             "config": str(config_path),
             "checkpoint": (
                 str(checkpoint_path) if checkpoint_path is not None else None
@@ -2143,6 +2644,16 @@ def run_confirm(
             f"Clean test slice starts at test:{TEST_OFFSET_FLOOR:04d}.",
             "No training and no threshold selection happens here.",
             "BLEU/COMET report the status returned by run_pfba.",
+            "The fixed (4,6) baseline uses the same runtime and per-candidate "
+            "sampling path; paired.json holds sentence-paired intervals.",
+            (
+                "Post controller enabled; its no-emit sigmoid is an "
+                "uncalibrated heuristic input, not a hard safety threshold."
+                if post_controller
+                else "Post controller disabled; risk heads are training-only "
+                "auxiliaries and no uncalibrated sigmoid is used as a hard "
+                "safety threshold."
+            ),
             (
                 "No trained checkpoint is in use, so untrained weights were "
                 "rolled out; this is not a confirmation result."
@@ -2159,6 +2670,19 @@ def run_confirm(
         f"[cavc] confirm complete: n={len(traces)} "
         f"BLEU={bleu.get('status', 'unknown')} "
         f"COMET={comet.get('status', 'unknown')}",
+        flush=True,
+    )
+    print(
+        f"[cavc] post_controller={summary['post_controller']} "
+        f"risk_calibration={risk_payload.get('status', 'unknown')}",
+        flush=True,
+    )
+    print(
+        "[cavc] paired learned-vs-fixed metrics: "
+        + ", ".join(
+            f"{name}={value.get('status')}"
+            for name, value in paired_payload["metrics"].items()
+        ),
         flush=True,
     )
     print(f"[cavc] wrote {summary_path}", flush=True)
@@ -2219,6 +2743,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_READ_PROB,
         help="behavior-policy READ probability for trajectory coverage",
     )
+    parser.add_argument(
+        "--post-controller",
+        action="store_true",
+        help="run the post-candidate STOP/ADD_2/WAIT controller after each "
+        "write; when off, risk heads are training-only auxiliaries",
+    )
+    parser.add_argument(
+        "--candidate-mode",
+        choices=("per_candidate", "batched"),
+        default="per_candidate",
+        help="labeling candidate sampler; per_candidate matches the runtime",
+    )
+    parser.add_argument(
+        "--comet",
+        action="store_true",
+        help="also compute sentence-paired COMET in paired.json (downloads "
+        "model weights)",
+    )
     parser.add_argument("--max-hours", type=float, default=10.0)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument(
@@ -2247,6 +2789,9 @@ def _dry_run_plan(args) -> dict:
         },
         "seed": int(args.seed),
         "output_dir": args.output_dir,
+        "post_controller": bool(args.post_controller),
+        "candidate_mode": str(args.candidate_mode),
+        "comet": bool(args.comet),
         "split_policy": {
             "preflight": "dev only, first --limit sentences",
             "dev": "label dev hash buckets 2-9; roll out holdout bucket 1",
@@ -2321,6 +2866,8 @@ def main(argv=None) -> int:
             predictor_name=args.predictor,
             translator_name=args.translator,
             read_prob=float(args.read_prob),
+            post_controller=bool(args.post_controller),
+            candidate_mode=str(args.candidate_mode),
         )
     elif args.mode == "dev":
         predictor, translator, _stream, _pdev, _tdev = resolve_adapters(
@@ -2340,6 +2887,9 @@ def main(argv=None) -> int:
             predictor_name=args.predictor,
             translator_name=args.translator,
             read_prob=float(args.read_prob),
+            post_controller=bool(args.post_controller),
+            candidate_mode=str(args.candidate_mode),
+            include_comet=bool(args.comet),
         )
     elif args.mode == "confirm":
         limit = DEFAULT_CONFIRM_LIMIT if args.limit is None else args.limit
@@ -2370,6 +2920,8 @@ def main(argv=None) -> int:
             checkpoint_path=checkpoint,
             predictor_name=args.predictor,
             translator_name=args.translator,
+            post_controller=bool(args.post_controller),
+            include_comet=bool(args.comet),
         )
     return 0
 

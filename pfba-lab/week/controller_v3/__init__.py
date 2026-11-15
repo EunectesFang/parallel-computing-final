@@ -34,6 +34,7 @@ from .evaluator import (
     comet_score,
     corpus_bleu,
     paired_bootstrap,
+    risk_calibration,
     summarize_traces,
 )
 from .features import (
@@ -50,6 +51,7 @@ from .features import (
     RuntimeInfo,
     StateInput,
     estimate_length_ratio,
+    feature_diagnostics,
 )
 from .labeler import ActionOutcome, CounterfactualLabeler
 from .network import CAVCNetwork, WriteOutputs
@@ -61,7 +63,7 @@ from .reward import (
     quality_reward,
     terminal_reward,
 )
-from .rollout import RolloutTrace, run_rollout
+from .rollout import RolloutTrace, run_fixed_rollout, run_rollout
 from .runtime import ControlledRuntime, StepResult, vote_statistics
 from .targets import build_action_targets, derive_state_key
 from .text_encoder import TextEncoder, Vocab
@@ -87,6 +89,7 @@ __all__ = [
     "OptionalConfidence",
     "FeatureBuilder",
     "estimate_length_ratio",
+    "feature_diagnostics",
     "Vocab",
     "TextEncoder",
     "CAVCNetwork",
@@ -111,6 +114,7 @@ __all__ = [
     "vote_statistics",
     "RolloutTrace",
     "run_rollout",
+    "run_fixed_rollout",
     "PostAction",
     "PostDecision",
     "PostController",
@@ -119,6 +123,7 @@ __all__ = [
     "comet_score",
     "summarize_traces",
     "paired_bootstrap",
+    "risk_calibration",
     "build_action_targets",
     "derive_state_key",
     "save_checkpoint",

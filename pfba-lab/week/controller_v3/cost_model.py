@@ -45,10 +45,14 @@ MIN_POWER_LAW_RECORDS = 4
 
 @dataclass(frozen=True)
 class CostEstimate:
-    """Prediction, translation, and total wall time in seconds.
+    """Prediction, translation, and their serial sum in seconds.
 
-    ``wall_s`` is always recomputed as ``pred_s + mt_s`` so an inconsistent
-    third positional argument cannot leak into the reward or target code.
+    ``wall_s`` is always recomputed as ``pred_s + mt_s``. It is a **serial
+    compute diagnostic**, not pipeline wall time: two devices can overlap, and
+    the runtime/scheduler uses `PipelineCostModel.marginal_wall` (or the
+    runtime's measured marginal) for wall-time pricing. Keeping the serial sum
+    on this diagnostic field would otherwise let it leak into the reward or
+    target code as if it were a pipeline cost.
     """
 
     pred_s: float
@@ -79,7 +83,13 @@ def _median(values: Sequence[float]) -> float:
 class MeasuredCostTable:
     """Median measured costs keyed by ``(predictor_id, translator_id, action)``.
 
-    Records are ``(predictor_id, translator_id, action, pred_s, mt_s)`` tuples.
+    Records are ``(predictor_id, translator_id, action, pred_s, mt_s)`` or the
+    newer ``(predictor_id, translator_id, action, pred_s, mt_s,
+    marginal_wall_s)`` tuples. The optional sixth value is measured pipeline
+    wall time; it is preserved on `.records` for audit/checkpointing but does
+    not change the ``(pred_s, mt_s)`` medians this table returns, because the
+    runtime and trainer price the two stages separately.
+
     READ records are ignored: READ is always free, and a stored zero-cost row
     could otherwise win the nearest-action fallback for a write action.
     `src_words` / `tgt_words` are accepted by `predict` for interface parity
@@ -89,25 +99,55 @@ class MeasuredCostTable:
 
     def __init__(
         self,
-        records: Sequence[tuple[int, int, Action, float, float]] = (),
+        records: Sequence[
+            tuple[int, int, Action, float, float]
+            | tuple[int, int, Action, float, float, float]
+        ] = (),
     ) -> None:
-        self.records: list[tuple[int, int, Action, float, float]] = []
+        self.records: list[tuple] = []
         self._table: dict[tuple[int, int, Action], tuple[float, float]] = {}
         self._by_pair: dict[tuple[int, int], dict[Action, tuple[float, float]]] = {}
         self._global: tuple[float, float] | None = None
         self.fit(records)
 
-    def fit(
-        self,
-        records: Iterable[tuple[int, int, Action, float, float]],
-    ) -> "MeasuredCostTable":
+    @staticmethod
+    def unpack_record(record) -> tuple:
+        """Normalise one record and validate it has five or six fields.
+
+        A legacy five-field record keeps its length; no marginal wall time is
+        invented from ``pred_s + mt_s`` because that serial sum is not the
+        pipeline wall time.
+        """
+        values = tuple(record)
+        if len(values) not in (5, 6):
+            raise ValueError(
+                "cost records must be (predictor_id, translator_id, action, "
+                "pred_s, mt_s) or the same with marginal_wall_s appended"
+            )
+        predictor_id, translator_id, action, pred_s, mt_s = values[:5]
+        if not isinstance(action, Action):
+            raise ValueError("cost record action must be an Action")
+        head = (
+            int(predictor_id),
+            int(translator_id),
+            action,
+            float(pred_s),
+            float(mt_s),
+        )
+        if len(values) == 6:
+            return (*head, float(values[5]))
+        return head
+
+    def fit(self, records: Iterable) -> "MeasuredCostTable":
         """Replace the table with the medians of `records`; return ``self``."""
         grouped: dict[tuple[int, int, Action], tuple[list[float], list[float]]] = {}
         all_pred: list[float] = []
         all_mt: list[float] = []
 
         self.records = []
-        for predictor_id, translator_id, action, pred_s, mt_s in records:
+        for record in records:
+            normalised = self.unpack_record(record)
+            predictor_id, translator_id, action, pred, mt = normalised[:5]
             # READ is free by definition. Keeping a zero-cost READ row would
             # let the nearest-action fallback price a write action at zero, so
             # READ records never enter the table or the global median.
@@ -115,13 +155,11 @@ class MeasuredCostTable:
                 continue
             key = (int(predictor_id), int(translator_id), action)
             preds, mts = grouped.setdefault(key, ([], []))
-            pred = float(pred_s)
-            mt = float(mt_s)
             preds.append(pred)
             mts.append(mt)
             all_pred.append(pred)
             all_mt.append(mt)
-            self.records.append((int(predictor_id), int(translator_id), action, pred, mt))
+            self.records.append(normalised)
 
         self._table = {
             key: (_median(preds), _median(mts))
@@ -251,18 +289,17 @@ class PowerLawCostModel:
         self.table = MeasuredCostTable()
         self.fit(records)
 
-    def fit(
-        self,
-        records: Iterable[tuple[int, int, Action, float, float]],
-    ) -> "PowerLawCostModel":
+    def fit(self, records: Iterable) -> "PowerLawCostModel":
         """Refit every model pair from `records`; return ``self``."""
+        # Preserve an optional sixth ``marginal_wall_s`` field while the fit
+        # itself uses only branches, horizon, and the two stage durations.
         materialized = [
-            (int(predictor_id), int(translator_id), action, float(pred_s), float(mt_s))
-            for predictor_id, translator_id, action, pred_s, mt_s in records
+            MeasuredCostTable.unpack_record(record) for record in records
         ]
         self.table = MeasuredCostTable(materialized)
         grouped: dict[tuple[int, int], list[tuple[Action, float, float]]] = defaultdict(list)
-        for predictor_id, translator_id, action, pred_s, mt_s in materialized:
+        for record in materialized:
+            predictor_id, translator_id, action, pred_s, mt_s = record[:5]
             grouped[(predictor_id, translator_id)].append((action, pred_s, mt_s))
 
         self.coefficients = {}

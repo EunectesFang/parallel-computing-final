@@ -31,6 +31,7 @@ __all__ = [
     "HistoryTracker",
     "advance_virtual_clock",
     "estimate_length_ratio",
+    "feature_diagnostics",
 ]
 
 HISTORY_FEATURES = (
@@ -474,3 +475,116 @@ def estimate_length_ratio(samples: Sequence[tuple[str, str]]) -> float:
         return 1.0
     mean = sum(ratios) / len(ratios)
     return min(2.0, max(0.5, mean))
+
+
+def _numeric_rows(vectors: Sequence) -> list[tuple[float, ...]]:
+    rows: list[tuple[float, ...]] = []
+    for vector in vectors:
+        numeric = getattr(vector, "numeric", None)
+        if numeric is None:
+            raise TypeError("feature_diagnostics needs objects with .numeric")
+        values = tuple(float(value) for value in numeric)
+        if len(values) != len(NUMERIC_FEATURES):
+            raise ValueError(
+                f"feature vector has {len(values)} values but "
+                f"NUMERIC_FEATURES has {len(NUMERIC_FEATURES)}"
+            )
+        rows.append(values)
+    return rows
+
+
+def _feature_stats(rows: Sequence[tuple[float, ...]]) -> dict[str, dict]:
+    """Per-feature mean/std/non-zero/missing over finite values only."""
+    count = len(rows)
+    result: dict[str, dict] = {}
+    for index, name in enumerate(NUMERIC_FEATURES):
+        finite = [row[index] for row in rows if math.isfinite(row[index])]
+        missing = count - len(finite)
+        if finite:
+            mean = sum(finite) / len(finite)
+            variance = sum((value - mean) ** 2 for value in finite) / len(finite)
+            std = math.sqrt(variance)
+            nonzero = sum(1 for value in finite if value != 0.0)
+        else:
+            mean = None
+            std = None
+            nonzero = 0
+        result[name] = {
+            "mean": mean,
+            "std": std,
+            "nonzero": int(nonzero),
+            "missing": int(missing),
+        }
+    return result
+
+
+def feature_diagnostics(
+    vectors: Sequence,
+    reference: Sequence | None = None,
+) -> dict:
+    """Per-feature statistics plus a train/serve mean shift.
+
+    `vectors` is the serving (or training) set and `reference`, when supplied,
+    is the training set. Every feature reports ``mean``, ``std``, ``nonzero``
+    (count of finite non-zero values), and ``missing`` (non-finite values).
+    With a reference, each feature also reports ``train_mean``, ``serve_mean``,
+    ``mean_diff`` (serving minus training), and
+    ``constant_train_varies_serving``.
+
+    That last flag is the silent-skew warning: a feature that never moved in
+    training but moves in serving means the served distribution is outside the
+    one the network saw. The returned top-level ``warnings`` list names every
+    such feature and ``constant_train_varies_serving`` collects them.
+    """
+    rows = _numeric_rows(vectors)
+    serving = _feature_stats(rows)
+    payload: dict = {
+        "n": len(rows),
+        "reference_n": 0,
+        "features": serving,
+        "warnings": [],
+        "constant_train_varies_serving": [],
+    }
+    if reference is None:
+        return payload
+
+    reference_rows = _numeric_rows(reference)
+    training = _feature_stats(reference_rows)
+    payload["reference_n"] = len(reference_rows)
+    warnings: list[str] = []
+    flagged: list[str] = []
+    for name in NUMERIC_FEATURES:
+        train = training[name]
+        serve = serving[name]
+        train_mean = train["mean"]
+        serve_mean = serve["mean"]
+        mean_diff = (
+            None
+            if train_mean is None or serve_mean is None
+            else float(serve_mean) - float(train_mean)
+        )
+        train_constant = train["std"] == 0.0 and train["mean"] is not None
+        serve_varies = serve["std"] not in (None, 0.0)
+        varies_from_train = (
+            train_constant
+            and serve_mean is not None
+            and abs(float(serve_mean) - float(train_mean)) > 1e-12
+        )
+        flag = bool(train_constant and (serve_varies or varies_from_train))
+        payload["features"][name] = {
+            **serve,
+            "train_mean": train_mean,
+            "train_std": train["std"],
+            "serve_mean": serve_mean,
+            "mean_diff": mean_diff,
+            "constant_train_varies_serving": flag,
+        }
+        if flag:
+            flagged.append(name)
+            warnings.append(
+                f"feature {name!r} is constant in training "
+                f"(mean={train_mean}, std=0) but varies in serving"
+            )
+    payload["warnings"] = warnings
+    payload["constant_train_varies_serving"] = flagged
+    return payload
