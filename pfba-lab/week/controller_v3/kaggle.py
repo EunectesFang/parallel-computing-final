@@ -61,7 +61,7 @@ import random
 import statistics
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace as dataclass_replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Sequence
@@ -130,8 +130,10 @@ DEFAULT_CONFIRM_LIMIT = 64
 # instead of mixing incompatible transitions. Format 3 fixed the terminal
 # proxy (the hypothesis includes the forced committed prefix). Format 4 records
 # `candidate_mode`: a per-candidate label pool and a batched pool must never be
-# appended into the same resumable file.
-LABEL_FORMAT = 4
+# appended into the same resumable file. Format 5 stores each outcome's
+# `marginal_wall_s` so the successor clock is rebuilt from pipeline wall time
+# instead of the labeler's serial max-b measurement.
+LABEL_FORMAT = 5
 
 # Trajectory-coverage policy: READ with probability `DEFAULT_READ_PROB`,
 # otherwise the fixed write action. This is *not* the policy being learned; it
@@ -744,6 +746,11 @@ def _serialize_outcome(outcome: ActionOutcome, reward: float) -> dict:
         "next_committed": list(outcome.next_committed),
         "pred_s": float(outcome.pred_s),
         "mt_s": float(outcome.mt_s),
+        "marginal_wall_s": (
+            None
+            if getattr(outcome, "marginal_wall_s", None) is None
+            else float(outcome.marginal_wall_s)
+        ),
         "vote_top1": float(outcome.vote_top1),
         "vote_margin": float(outcome.vote_margin),
         "vote_entropy": float(outcome.vote_entropy),
@@ -772,6 +779,11 @@ def _outcome_from_record(record: dict) -> ActionOutcome:
         vote_margin=float(record.get("vote_margin", 0.0)),
         vote_entropy=float(record.get("vote_entropy", 0.0)),
         candidates=(),
+        marginal_wall_s=(
+            None
+            if record.get("marginal_wall_s") is None
+            else float(record["marginal_wall_s"])
+        ),
     )
 
 
@@ -897,6 +909,91 @@ def _action_reward(
     )
 
 
+def _step_seconds(outcome: ActionOutcome) -> float:
+    """Pipeline seconds one labelled action advances the training clock by.
+
+    Prefers the cost model's pipeline marginal. When no cost model was
+    supplied, falls back to the outcome's serial ``pred_s + mt_s`` compute;
+    that fallback is a documented approximation, not pipeline wall time, and
+    in per-candidate mode it uses the labeler's shared max-branch measurement.
+    """
+    marginal = getattr(outcome, "marginal_wall_s", None)
+    if marginal is not None:
+        return float(marginal)
+    return float(outcome.pred_s) + float(outcome.mt_s)
+
+
+def _estimate_action_marginal(
+    cost_model,
+    action: Action,
+    observed: str,
+    committed: Sequence[str],
+    release_s: float,
+    t_pred_free: float,
+    t_mt_free: float,
+    predictor_id: int,
+    translator_id: int,
+) -> float | None:
+    """Pipeline marginal for one action at a decision state, or ``None``.
+
+    The device free times are raised to the release moment before pricing so
+    the estimate uses the same baseline as `ControlledRuntime`, where idle
+    time before the decision is not charged to the action.
+    """
+    if action.is_read:
+        return 0.0
+    marginal = getattr(cost_model, "marginal_wall", None)
+    if not callable(marginal):
+        return None
+    release = max(0.0, float(release_s))
+    return float(
+        marginal(
+            max(float(t_pred_free), release),
+            max(float(t_mt_free), release),
+            release,
+            release,
+            int(predictor_id),
+            int(translator_id),
+            action,
+            len(observed.split()),
+            len(tuple(committed)),
+        )
+    )
+
+
+def _advance_devices(
+    cost_model,
+    action: Action,
+    observed: str,
+    committed: Sequence[str],
+    release_s: float,
+    t_pred_free: float,
+    t_mt_free: float,
+    predictor_id: int,
+    translator_id: int,
+) -> tuple[float, float]:
+    """Update `(t_pred_free, t_mt_free)` after pricing `action`.
+
+    Mirrors `ControlledRuntime._schedule_marginal` but uses the cost model's
+    predicted stage times. READ leaves both devices untouched.
+    """
+    if action.is_read:
+        return float(t_pred_free), float(t_mt_free)
+    estimate = cost_model.predict(
+        int(predictor_id),
+        int(translator_id),
+        action,
+        len(observed.split()),
+        len(tuple(committed)),
+    )
+    release = max(0.0, float(release_s))
+    pred_start = max(float(t_pred_free), release)
+    pred_end = pred_start + max(0.0, float(estimate.pred_s))
+    mt_start = max(float(t_mt_free), pred_end, release)
+    mt_end = mt_start + max(0.0, float(estimate.mt_s))
+    return pred_end, mt_end
+
+
 def _advance_tracker(
     tracker: HistoryTracker,
     outcome: ActionOutcome,
@@ -949,6 +1046,7 @@ def label_sentence(
     translator_id: int = 0,
     read_prob: float = DEFAULT_READ_PROB,
     max_states: int | None = None,
+    cost_model=None,
 ) -> dict:
     """Label one sentence with true one-step transitions.
 
@@ -976,8 +1074,14 @@ def label_sentence(
       and the Bellman target still uses every labeled action outcome.
 
     The clock advances with :func:`features.advance_virtual_clock` using the
-    behavior action's measured ``pred_s + mt_s``, matching the rollout cadence
-    so `time_since_commit` is in the same range in training and serving.
+    behavior action's **pipeline marginal** wall time when a `cost_model` is
+    supplied, matching the rollout's billing so `time_since_commit` is in the
+    same range in training and serving. Each action outcome is priced
+    individually against the current virtual device schedule; the labeler's
+    shared max-branch ``pred_s`` measurement is deliberately *not* used while a
+    cost model exists. Without a cost model, the documented fallback is the
+    outcome's serial ``pred_s + mt_s`` (for per-candidate sampling, the shared
+    max-branch measurement).
 
     `max_states` stops after that many labeled positions. A stopped state is
     terminal only when it is the sentence's true last decision position.
@@ -1044,6 +1148,10 @@ def label_sentence(
     # last decision position even when `max_states` stops the walk early.
     last_index = len(full_positions) - 1
     clock_s = 0.0
+    # Virtual prediction/translation devices used to price each labelled
+    # action's marginal wall time on the same schedule as the rollout.
+    t_pred_free = 0.0
+    t_mt_free = 0.0
 
     for index, read_pos in enumerate(positions):
         observed = " ".join(words[:read_pos])
@@ -1061,7 +1169,30 @@ def label_sentence(
             observed, committed, source, label_actions, seed
         )
         read = labeler.read_outcome(committed)
-        all_outcomes = (read, *write_outcomes)
+        release_s = max(
+            clock_s, max(0.0, (int(read_pos) - 1) * arrival_gap)
+        )
+        # Price every action at this state on the same device schedule. The
+        # per-action cost-model estimate replaces the labeler's shared max-b
+        # measurement for the clock; the outcome still carries the measured
+        # pred_s/mt_s as diagnostics.
+        priced_outcomes = []
+        for outcome in (read, *write_outcomes):
+            marginal = _estimate_action_marginal(
+                cost_model,
+                outcome.action,
+                observed,
+                committed,
+                release_s,
+                t_pred_free,
+                t_mt_free,
+                predictor_id,
+                translator_id,
+            )
+            priced_outcomes.append(
+                dataclass_replace(outcome, marginal_wall_s=marginal)
+            )
+        all_outcomes = tuple(priced_outcomes)
         by_action = {outcome.action: outcome for outcome in all_outcomes}
         rewards = {
             outcome.action: _action_reward(
@@ -1118,13 +1249,26 @@ def label_sentence(
             )
 
         states.append(row)
-        committed = tuple(behavior_outcome.next_committed)
         # Same clock recurrence as the rollout: settle the source arrival, then
-        # bill the behavior action's measured compute (READ adds none).
-        spent = float(behavior_outcome.pred_s) + float(behavior_outcome.mt_s)
+        # bill the behavior action's pipeline marginal (serial compute only
+        # when no cost model exists). READ adds nothing.
+        spent = _step_seconds(behavior_outcome)
         clock_s = advance_virtual_clock(
             clock_s, read_pos, arrival_gap, spent
         )
+        if cost_model is not None:
+            t_pred_free, t_mt_free = _advance_devices(
+                cost_model,
+                behavior_action,
+                observed,
+                committed,
+                release_s,
+                t_pred_free,
+                t_mt_free,
+                predictor_id,
+                translator_id,
+            )
+        committed = tuple(behavior_outcome.next_committed)
         tracker = _advance_tracker(tracker, behavior_outcome, clock_s)
 
     return {
@@ -1252,7 +1396,10 @@ def _targets_from_rows(
             else:
                 next_states = []
                 for outcome in outcomes:
-                    spent = float(outcome.pred_s) + float(outcome.mt_s)
+                    # Per-action successor clock: pipeline marginal when the
+                    # labels were priced, serial compute only as the documented
+                    # fallback for an un-priced labels file.
+                    spent = _step_seconds(outcome)
                     next_now_s = advance_virtual_clock(
                         pre_now_s, read_pos, cfg.arrival_gap, spent
                     )
@@ -1296,6 +1443,7 @@ def _label_few_states(
     predictor_id: int,
     translator_id: int,
     read_prob: float = DEFAULT_READ_PROB,
+    cost_model=None,
 ):
     """Label at most `count` one-step decision states across sentences."""
     count = int(count)
@@ -1316,6 +1464,7 @@ def _label_few_states(
             translator_id=translator_id,
             read_prob=read_prob,
             max_states=remaining,
+            cost_model=cost_model,
         )
         rows.append(row)
         labeled_states += len(row.get("states") or [])
@@ -1617,12 +1766,21 @@ def _train_and_write(
     if calibrate_risk:
         train_targets, calibration_targets = _split_calibration_targets(targets)
 
+    # Training and rollout must price the Bellman backup the same way: the
+    # pipeline model exposes marginal wall time, with serial compute only as a
+    # documented fallback inside the trainer.
+    pipeline_cost = (
+        PipelineCostModel(cost_model) if cost_model is not None else None
+    )
+
     trained = False
     if deadline is not None and time.perf_counter() >= deadline:
         training = _skipped_training(len(train_targets))
         stopped_reason = "deadline"
     else:
-        trainer = CAVCTrainer(network, cfg, cost_model)
+        trainer = CAVCTrainer(
+            network, cfg, pipeline_cost if pipeline_cost is not None else cost_model
+        )
         training = trainer.fit(train_targets)
         trained = True
 
@@ -1665,9 +1823,8 @@ def _train_and_write(
     predictor_id = int(model_pair.get("predictor_id", 0))
     translator_id = int(model_pair.get("translator_id", 0))
     post_controller = PostController() if post_controller_enabled else None
-    # Rollout scores actions with the pipeline marginal, never with the serial
-    # pred_s + mt_s sum. The measured table stays the base estimate.
-    pipeline_cost = PipelineCostModel(cost_model) if cost_model is not None else None
+    # `pipeline_cost` (created before training) prices every rollout action by
+    # marginal wall time, never by the serial pred_s + mt_s sum.
     recording_builder = _RecordingBuilder(builder)
     traces: list[RolloutTrace] = []
     fixed_traces: list[RolloutTrace] = []
@@ -1751,9 +1908,27 @@ def _train_and_write(
         )
         _write_json(paired_path, paired_payload)
 
+    # Never calibrate the risk heads on an untrained network: a kept
+    # checkpoint only counts when its own metadata says it was trained.
+    effective_trained = bool(trained) or (
+        checkpoint_status == "kept_existing"
+        and metadata is not None
+        and bool((metadata.get("extra") or {}).get("trained", False))
+    )
     risk_payload = None
     if calibrate_risk:
-        if calibration_targets:
+        if not effective_trained or checkpoint_status not in {
+            "written",
+            "kept_existing",
+        }:
+            risk_payload = {
+                "status": "unavailable",
+                "reason": "network was not trained in this run",
+                "n": 0,
+                "error_risk": {},
+                "no_emit": {},
+            }
+        elif calibration_targets:
             risk_payload = risk_calibration(network, calibration_targets)
         else:
             risk_payload = {
@@ -1968,6 +2143,7 @@ def run_preflight(
         pid,
         tid,
         read_prob=read_prob,
+        cost_model=PipelineCostModel(cost_model),
     )
     if not targets:
         raise RuntimeError(
@@ -2165,6 +2341,48 @@ def run_dev(
         )
     done = {str(row.get("sentence_id", "")) for row in existing_rows}
 
+    # Calibrate/reuse the cost model before labeling: the labelling walk uses
+    # the per-action pipeline marginal for its training clock, so it must not
+    # wait for the labeler's shared max-branch timing measurement.
+    cost_deadline = False
+    loaded_cost = _reuse_cost_records(
+        output_dir / "cost_records.json", pid, tid
+    )
+    if loaded_cost is not None:
+        cost_records, cost_summary = loaded_cost
+        cost_summary = dict(cost_summary)
+        cost_summary["reused_from_artifact"] = True
+    elif time.perf_counter() >= deadline:
+        print(
+            "[cavc] deadline reached before cost calibration; using an empty "
+            "cost table",
+            flush=True,
+        )
+        cost_records = []
+        cost_summary = {
+            "status": "skipped",
+            "reason": "deadline",
+            "n_records": 0,
+            "predictor_id": pid,
+            "translator_id": tid,
+        }
+        cost_deadline = True
+    else:
+        cost_records, cost_summary = calibrate_cost_records(
+            predictor,
+            translator,
+            train_sentences,
+            cfg.actions,
+            cfg,
+            limit=min(8, max(1, len(train_sentences))),
+            states_per_sentence=1,
+            predictor_id=pid,
+            translator_id=tid,
+            timer=timer,
+        )
+    cost_model = MeasuredCostTable(cost_records)
+    label_cost = PipelineCostModel(cost_model)
+
     newly_labeled = 0
     stopped_for_deadline = False
     with labels_path.open("a", encoding="utf-8") as handle:
@@ -2184,6 +2402,7 @@ def run_dev(
                 predictor_id=pid,
                 translator_id=tid,
                 read_prob=read_prob,
+                cost_model=label_cost,
             )
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             handle.flush()
@@ -2253,43 +2472,9 @@ def run_dev(
             "at least one dev train sentence"
         )
 
-    stopped_reason = "deadline" if stopped_for_deadline else None
-    loaded_cost = _reuse_cost_records(
-        output_dir / "cost_records.json", pid, tid
+    stopped_reason = (
+        "deadline" if (stopped_for_deadline or cost_deadline) else None
     )
-    if loaded_cost is not None:
-        cost_records, cost_summary = loaded_cost
-        cost_summary = dict(cost_summary)
-        cost_summary["reused_from_artifact"] = True
-    elif time.perf_counter() >= deadline:
-        print(
-            "[cavc] deadline reached before cost calibration; using an empty "
-            "cost table",
-            flush=True,
-        )
-        cost_records = []
-        cost_summary = {
-            "status": "skipped",
-            "reason": "deadline",
-            "n_records": 0,
-            "predictor_id": pid,
-            "translator_id": tid,
-        }
-        stopped_reason = "deadline"
-    else:
-        cost_records, cost_summary = calibrate_cost_records(
-            predictor,
-            translator,
-            train_sentences,
-            cfg.actions,
-            cfg,
-            limit=min(8, max(1, len(train_sentences))),
-            states_per_sentence=1,
-            predictor_id=pid,
-            translator_id=tid,
-            timer=timer,
-        )
-    cost_model = MeasuredCostTable(cost_records)
 
     targets, states = _targets_from_rows(rows, builder, cfg, pid, tid)
     if not targets:
@@ -2403,9 +2588,13 @@ def run_confirm(
     A supplied checkpoint must carry ``extra["trained"] is True``. If it is
     false or missing, `ValueError` is raised unless `allow_untrained=True` is
     passed explicitly; either way the summary reports ``trained=False`` rather
-    than claiming the weights were trained. Without a checkpoint an untrained
-    network is evaluated and the summary reports ``trained=False`` so the run
-    cannot be mistaken for a real confirmation.
+    than claiming the weights were trained.
+
+    A vocabulary is **never** rebuilt from test sentences. The run therefore
+    requires either a checkpoint with a stored vocabulary or an explicit frozen
+    `builder` + `network` supplied by the caller; otherwise `ValueError` is
+    raised. With no trained checkpoint the summary reports ``trained=False`` so
+    an untrained diagnostic can never be mistaken for a confirmation result.
     """
     offset = int(offset)
     if offset < TEST_OFFSET_FLOOR and not allow_consumed:
@@ -2466,39 +2655,13 @@ def run_confirm(
         # are loaded, so a mismatch cannot silently remap the text ids.
         _validate_checkpoint_metadata(payload, model_pair)
 
-    vocab_source = "supplied"
-    if builder is None or network is None:
-        frozen_vocab, frozen_ratio = (
-            _frozen_vocab(payload) if payload is not None else (None, None)
-        )
-        if frozen_vocab is not None:
-            # A dev-trained checkpoint must see the same word ids at test
-            # time, so the stored vocabulary and length ratio win over one
-            # rebuilt from the test sentences.
-            vocab_source = "checkpoint"
-            pairs = [
-                (
-                    str(_field(sentence, "source", "")),
-                    str(_field(sentence, "reference", "")),
-                )
-                for sentence in sentences
-            ]
-            ratio = (
-                frozen_ratio
-                if frozen_ratio is not None
-                else estimate_length_ratio(pairs)
-            )
-            builder = builder or FeatureBuilder(
-                length_ratio=ratio,
-                src_vocab=frozen_vocab,
-                tgt_vocab=frozen_vocab,
-            )
-            network = network or CAVCNetwork(
-                cfg,
-                src_vocab_size=len(frozen_vocab),
-                tgt_vocab_size=len(frozen_vocab),
-            )
-        elif payload is not None:
+    if builder is not None and network is not None:
+        # A caller-supplied frozen builder and network are used as-is. The
+        # caller owns the vocabulary; no test sentence is tokenized into one.
+        vocab_source = "supplied_frozen"
+    elif payload is not None:
+        frozen_vocab, frozen_ratio = _frozen_vocab(payload)
+        if frozen_vocab is None:
             # `_validate_checkpoint_metadata` already rejects a checkpoint
             # without a stored vocabulary; keep this as a hard stop so an
             # evaluation vocabulary can never be rebuilt from test sentences.
@@ -2506,15 +2669,38 @@ def run_confirm(
                 f"checkpoint {checkpoint_path} has no stored vocabulary; "
                 "refusing to rebuild a test-derived vocabulary"
             )
-        else:
-            # No checkpoint means an untrained diagnostic; the summary records
-            # that its vocabulary came from the evaluated sentences.
-            vocab_source = "evaluation_sentences_diagnostic"
-            built_builder, built_network, _built_vocab = _components(
-                cfg, sentences
+        # A dev-trained checkpoint must see the same word ids at test time, so
+        # the stored vocabulary and length ratio win over one rebuilt from the
+        # test sentences.
+        vocab_source = "checkpoint"
+        pairs = [
+            (
+                str(_field(sentence, "source", "")),
+                str(_field(sentence, "reference", "")),
             )
-            builder = builder or built_builder
-            network = network or built_network
+            for sentence in sentences
+        ]
+        ratio = (
+            frozen_ratio
+            if frozen_ratio is not None
+            else estimate_length_ratio(pairs)
+        )
+        builder = builder or FeatureBuilder(
+            length_ratio=ratio,
+            src_vocab=frozen_vocab,
+            tgt_vocab=frozen_vocab,
+        )
+        network = network or CAVCNetwork(
+            cfg,
+            src_vocab_size=len(frozen_vocab),
+            tgt_vocab_size=len(frozen_vocab),
+        )
+    else:
+        raise ValueError(
+            "confirm requires a checkpoint or an explicit frozen "
+            "builder+network; refusing to build a vocabulary from test "
+            "sentences"
+        )
 
     loaded_metadata = None
     checkpoint_trained = False

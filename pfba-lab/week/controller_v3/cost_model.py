@@ -58,6 +58,10 @@ class CostEstimate:
     pred_s: float
     mt_s: float
     wall_s: float = 0.0
+    # Optional scheduled pipeline wall time. A plain measured model leaves this
+    # ``None`` because it has no device schedule; the trainer then falls back to
+    # the documented serial ``wall_s`` diagnostic.
+    marginal_wall_s: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "wall_s", float(self.pred_s) + float(self.mt_s))

@@ -20,11 +20,15 @@ from controller_v3 import kaggle
 from controller_v3.action import READ, Action
 from controller_v3.checkpoint import load_checkpoint
 from controller_v3.config import ControllerConfig
-from controller_v3.cost_model import CostEstimate, MeasuredCostTable
+from controller_v3.cost_model import (
+    CostEstimate,
+    MeasuredCostTable,
+    PipelineCostModel,
+)
 from controller_v3.features import NUMERIC_FEATURES, FeatureBuilder
 from controller_v3.labeler import ActionOutcome, CounterfactualLabeler
 from controller_v3.network import CAVCNetwork, WriteOutputs
-from controller_v3.rollout import run_rollout
+from controller_v3.rollout import run_fixed_rollout, run_rollout
 from controller_v3.runtime import StepResult
 from controller_v3.text_encoder import Vocab
 
@@ -213,6 +217,16 @@ def make_harness(**cfg_overrides):
     }
 
 
+def _frozen_builder_network(harness):
+    """A caller-supplied frozen builder/network for no-checkpoint confirm tests."""
+    cfg = harness["cfg"]
+    vocab = harness["vocab"]
+    return (
+        FeatureBuilder(length_ratio=1.0, src_vocab=vocab, tgt_vocab=vocab),
+        CAVCNetwork(cfg, src_vocab_size=len(vocab), tgt_vocab_size=len(vocab)),
+    )
+
+
 # ----------------------------------------------------------------------
 # Preflight
 # ----------------------------------------------------------------------
@@ -375,6 +389,7 @@ def test_run_confirm_accepts_allow_consumed_on_test_slice(tmp_path):
         for offset, (_sid, source, reference) in enumerate(SENTENCES, start=140)
     ]
 
+    builder, network = _frozen_builder_network(harness)
     summary = kaggle.run_confirm(
         offset=139,
         limit=2,
@@ -384,6 +399,8 @@ def test_run_confirm_accepts_allow_consumed_on_test_slice(tmp_path):
         translator=harness["translator"],
         sentences=test_sentences,
         cfg=cfg,
+        builder=builder,
+        network=network,
         predictor_id=0,
         translator_id=0,
         timer=harness["timer"],
@@ -453,6 +470,7 @@ def test_run_confirm_accepts_clean_offset_by_default(tmp_path):
         Sentence(f"test:{offset:04d}", source, reference, split="test")
         for offset, (_sid, source, reference) in enumerate(SENTENCES, start=140)
     ]
+    builder, network = _frozen_builder_network(harness)
     summary = kaggle.run_confirm(
         offset=140,
         limit=1,
@@ -461,10 +479,13 @@ def test_run_confirm_accepts_clean_offset_by_default(tmp_path):
         translator=harness["translator"],
         sentences=test_sentences,
         cfg=harness["cfg"],
+        builder=builder,
+        network=network,
         timer=harness["timer"],
     )
     assert summary["offset"] == 140
     assert summary["n_traces"] == 1
+    assert summary["vocab_source"] == "supplied_frozen"
 
 
 # ----------------------------------------------------------------------
@@ -1129,6 +1150,12 @@ def test_deadline_skip_without_prior_checkpoint_writes_no_checkpoint(tmp_path):
     assert summary["checkpoint"]["path"] is None
     assert summary["artifacts"]["checkpoint"] is None
     assert not checkpoint.exists()
+    # Risk calibration is gated on the network actually being trained.
+    assert summary["risk_calibration"]["status"] == "unavailable"
+    assert summary["risk_calibration"]["reason"] == (
+        "network was not trained in this run"
+    )
+    assert "brier" not in summary["risk_calibration"]["error_risk"]
 
 
 def _feature_stats_payload():
@@ -1400,6 +1427,7 @@ def test_run_confirm_refuses_bad_checkpoint_metadata(tmp_path, extra, match):
 
 def test_run_confirm_writes_fixed_baseline_and_paired_metrics(tmp_path):
     harness = make_harness()
+    builder, network = _frozen_builder_network(harness)
     summary = kaggle.run_confirm(
         offset=140,
         limit=1,
@@ -1408,6 +1436,8 @@ def test_run_confirm_writes_fixed_baseline_and_paired_metrics(tmp_path):
         translator=harness["translator"],
         sentences=_confirm_test_sentences(),
         cfg=harness["cfg"],
+        builder=builder,
+        network=network,
         timer=harness["timer"],
     )
 
@@ -1454,3 +1484,199 @@ def test_run_dev_refuses_mixed_candidate_modes_in_labels(tmp_path):
             timer=harness["timer"],
             candidate_mode="per_candidate",
         )
+
+
+def test_run_confirm_refuses_to_build_a_test_vocabulary(tmp_path):
+    harness = make_harness()
+    with pytest.raises(ValueError, match="refusing to build a vocabulary"):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            cfg=harness["cfg"],
+            timer=harness["timer"],
+        )
+
+
+# ----------------------------------------------------------------------
+# Fix round 1: training/successor clocks use marginal wall time
+# ----------------------------------------------------------------------
+class ConstantStageCost:
+    """Cost model whose stage estimates match a fixed timer exactly."""
+
+    def __init__(self, pred_s: float = 0.2, mt_s: float = 0.05) -> None:
+        self.pred_s = float(pred_s)
+        self.mt_s = float(mt_s)
+
+    def marginal_wall(
+        self,
+        t_pred_free,
+        t_mt_free,
+        release_s,
+        dependency_s,
+        predictor_id,
+        translator_id,
+        action,
+        src_words,
+        tgt_words,
+    ):
+        pred_start = max(t_pred_free, release_s)
+        pred_end = pred_start + self.pred_s
+        mt_start = max(t_mt_free, pred_end, dependency_s)
+        mt_end = mt_start + self.mt_s
+        baseline = max(t_pred_free, t_mt_free, release_s)
+        return max(0.0, max(pred_end, mt_end) - baseline)
+
+    def predict(self, predictor_id, translator_id, action, src_words, tgt_words):
+        return CostEstimate(self.pred_s, self.mt_s)
+
+
+def test_labeling_clock_bills_marginal_not_the_large_serial_sum():
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
+    )
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+
+    class TinyMarginalCost(ConstantStageCost):
+        def marginal_wall(self, *args, **kwargs):
+            return 0.01
+
+        def predict(self, *args, **kwargs):
+            # Large serial stage estimates: they must not drive the clock.
+            return CostEstimate(10.0, 10.0)
+
+    row = kaggle.label_sentence(
+        StubLabeler(),
+        sentence,
+        stride=1,
+        cfg=cfg,
+        read_prob=0.0,
+        cost_model=TinyMarginalCost(),
+    )
+    behavior = [
+        next(
+            outcome
+            for outcome in state["outcomes"]
+            if outcome["action"] == "b4h6"
+        )
+        for state in row["states"]
+    ]
+    assert all(outcome["marginal_wall_s"] == pytest.approx(0.01) for outcome in behavior)
+    assert all(outcome["pred_s"] == 0.1 for outcome in behavior)
+    # 0.6 s source arrival + 0.01 s marginal, not 0.6 + (0.1 + 0.1) serial.
+    assert row["states"][1]["now_s"] == pytest.approx(0.61)
+    assert row["states"][1]["now_s"] != pytest.approx(0.8)
+
+
+def test_training_and_rollout_clocks_agree_for_the_same_actions():
+    harness = make_harness()
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(4, 6),),
+        min_start=3,
+        arrival_gap=0.3,
+    )
+    # Per-candidate (4,6): four 0.05 s samples + one 0.05 s translation.
+    cost_model = PipelineCostModel(ConstantStageCost(pred_s=0.2, mt_s=0.05))
+    sentence = harness["sentences"][0]
+
+    row = kaggle.label_sentence(
+        harness["labeler"],
+        sentence,
+        stride=1,
+        cfg=cfg,
+        builder=harness["builder"],
+        read_prob=0.0,
+        cost_model=cost_model,
+    )
+    behavior_marginals = [
+        next(
+            outcome["marginal_wall_s"]
+            for outcome in state["outcomes"]
+            if outcome["action"] == "b4h6"
+        )
+        for state in row["states"]
+    ]
+
+    trace = run_fixed_rollout(
+        sentence,
+        harness["predictor"],
+        harness["translator"],
+        harness["builder"],
+        cost_model,
+        cfg,
+        timer=harness["timer"],
+    )
+    fixed_steps = [
+        step for step in trace.steps if step["action"] == "b4h6"
+    ]
+    assert behavior_marginals == pytest.approx(
+        [step["marginal_wall_s"] for step in fixed_steps]
+    )
+
+    # Absolute virtual clocks agree too: the labeling walk's pre-action clock
+    # matches the fixed rollout's completion before the same write.
+    completion = 0.0
+    fixed_before = []
+    for step in fixed_steps:
+        fixed_before.append(completion)
+        release = max(
+            completion, (step["read_pos"] - 1) * cfg.arrival_gap
+        )
+        completion = release + step["marginal_wall_s"]
+    assert [state["now_s"] for state in row["states"]] == pytest.approx(
+        fixed_before
+    )
+
+
+def test_outcome_records_roundtrip_marginal_wall():
+    record = {
+        "action": "b4h6",
+        "branches": 4,
+        "horizon": 6,
+        "pred_s": 10.0,
+        "mt_s": 10.0,
+        "marginal_wall_s": 0.01,
+    }
+    outcome = kaggle._outcome_from_record(record)
+    assert outcome.marginal_wall_s == pytest.approx(0.01)
+    assert kaggle._step_seconds(outcome) == pytest.approx(0.01)
+
+    # A legacy record without the field keeps the documented serial fallback.
+    legacy = kaggle._outcome_from_record(
+        {"action": "b4h6", "branches": 4, "horizon": 6,
+         "pred_s": 10.0, "mt_s": 10.0}
+    )
+    assert legacy.marginal_wall_s is None
+    assert kaggle._step_seconds(legacy) == pytest.approx(20.0)
+
+
+def test_labeling_without_a_cost_model_falls_back_to_serial_compute():
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
+    )
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+    row = kaggle.label_sentence(
+        StubLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
+    behavior = [
+        next(
+            outcome
+            for outcome in state["outcomes"]
+            if outcome["action"] == "b4h6"
+        )
+        for state in row["states"]
+    ]
+    assert all(outcome["marginal_wall_s"] is None for outcome in behavior)
+    # StubLabeler: pred_s + mt_s = 0.2 per write, plus the 0.6 s arrival of the
+    # first decision. This is the documented no-cost-model fallback only.
+    assert row["states"][1]["now_s"] == pytest.approx(0.8)

@@ -80,6 +80,10 @@ class ActionOutcome:
     vote_margin: float
     vote_entropy: float
     candidates: tuple[str, ...] = ()
+    # Pipeline marginal wall time for this action as priced by the cost model at
+    # its decision state. ``None`` means no cost model was supplied; the
+    # training clock then falls back to the serial ``pred_s + mt_s`` compute.
+    marginal_wall_s: float | None = None
 
 
 def _default_timer(timer):

@@ -354,3 +354,76 @@ def test_target_network_is_frozen_and_updates_after_an_epoch():
         trainer.target_network.parameters(), network.parameters()
     ):
         assert torch.equal(target_parameter, online_parameter)
+
+
+# ----------------------------------------------------------------------
+# Bellman cost accounting: marginal before serial
+# ----------------------------------------------------------------------
+class MarginalEstimateCost:
+    """Estimate carries both a serial wall and a scheduled marginal."""
+
+    def __init__(self, marginal: float = 2.0) -> None:
+        self.marginal = float(marginal)
+
+    def predict(self, predictor_id, translator_id, action, src_words, tgt_words):
+        return SimpleNamespace(
+            pred_s=5.0,
+            mt_s=5.0,
+            wall_s=10.0,
+            marginal_wall_s=self.marginal,
+        )
+
+
+class MarginalMethodCost:
+    """Plain estimate, but the model exposes a marginal scheduler."""
+
+    def __init__(self, marginal: float = 3.0) -> None:
+        self.marginal = float(marginal)
+        self.calls: list[tuple] = []
+
+    def predict(self, predictor_id, translator_id, action, src_words, tgt_words):
+        return SimpleNamespace(pred_s=5.0, mt_s=5.0, wall_s=10.0)
+
+    def marginal_wall(
+        self,
+        t_pred_free,
+        t_mt_free,
+        release_s,
+        dependency_s,
+        predictor_id,
+        translator_id,
+        action,
+        src_words,
+        tgt_words,
+    ):
+        self.calls.append((t_pred_free, t_mt_free, release_s, action))
+        return self.marginal
+
+
+def test_bellman_cost_prefers_the_estimate_marginal_wall():
+    cfg = replace(ControllerConfig(), numeric_dim=len(NUMERIC_FEATURES))
+    torch.manual_seed(cfg.seed)
+    network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)
+    trainer = CAVCTrainer(network, cfg, MarginalEstimateCost(marginal=2.0))
+
+    assert trainer._cost(make_state(0), ACTIONS[0]) == pytest.approx(2.0)
+
+
+def test_bellman_cost_uses_the_model_marginal_scheduler_when_available():
+    cfg = replace(ControllerConfig(), numeric_dim=len(NUMERIC_FEATURES))
+    torch.manual_seed(cfg.seed)
+    network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)
+    model = MarginalMethodCost(marginal=3.0)
+    trainer = CAVCTrainer(network, cfg, model)
+
+    assert trainer._cost(make_state(0), ACTIONS[0]) == pytest.approx(3.0)
+    assert model.calls and model.calls[0][:3] == (0.0, 0.0, 0.0)
+
+
+def test_bellman_cost_falls_back_to_serial_wall_without_scheduling():
+    trainer, _, _ = make_trainer()
+    state = make_state(0)
+    estimate = trainer.cost_model.predict(
+        0, 0, ACTIONS[0], 5, 3
+    )
+    assert trainer._cost(state, ACTIONS[0]) == pytest.approx(estimate.wall_s)

@@ -259,7 +259,15 @@ class CAVCTrainer:
         return values
 
     def _cost(self, state: StateInput, action: Action) -> float:
-        """Explicit runtime cost for `action`; zero when no model is injected."""
+        """Explicit runtime cost for `action`; zero when no model is injected.
+
+        Training must price the Bellman backup the same way rollout does. The
+        scheduled pipeline marginal wins when available: first from an
+        estimate that carries ``marginal_wall_s``, then from a cost model with
+        a ``marginal_wall`` method (priced from free devices). The serial
+        ``wall_s`` is only a documented fallback for a plain measured model
+        with no device scheduling; it is never presented as pipeline wall time.
+        """
         if self.cost_model is None:
             return 0.0
         src_words = int(round(state.numeric[SRC_WORDS_INDEX]))
@@ -271,6 +279,23 @@ class CAVCTrainer:
             src_words,
             tgt_words,
         )
+        marginal = getattr(estimate, "marginal_wall_s", None)
+        if marginal is None:
+            marginal_wall = getattr(self.cost_model, "marginal_wall", None)
+            if callable(marginal_wall):
+                marginal = marginal_wall(
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0,
+                    state.predictor_id,
+                    state.translator_id,
+                    action,
+                    src_words,
+                    tgt_words,
+                )
+        if marginal is not None:
+            return float(marginal)
         wall = getattr(estimate, "wall_s", estimate)
         return float(wall)
 
