@@ -20,10 +20,12 @@ from controller_v3 import kaggle
 from controller_v3.action import READ, Action
 from controller_v3.checkpoint import load_checkpoint
 from controller_v3.config import ControllerConfig
-from controller_v3.cost_model import MeasuredCostTable
+from controller_v3.cost_model import CostEstimate, MeasuredCostTable
 from controller_v3.features import FeatureBuilder
-from controller_v3.labeler import CounterfactualLabeler
-from controller_v3.network import CAVCNetwork
+from controller_v3.labeler import ActionOutcome, CounterfactualLabeler
+from controller_v3.network import CAVCNetwork, WriteOutputs
+from controller_v3.rollout import run_rollout
+from controller_v3.runtime import StepResult
 from controller_v3.text_encoder import Vocab
 
 # Long enough to have several decision positions past min_start=3.
@@ -642,3 +644,335 @@ def test_confirm_parser_rejects_consumed_offset_before_loading_models(monkeypatc
     monkeypatch.setattr(kaggle, "resolve_adapters", explode)
     with pytest.raises(ValueError, match="consumed|140"):
         kaggle.main(["--mode", "confirm", "--offset", "139"])
+
+
+# ----------------------------------------------------------------------
+# Fix round 1: model-pair ids, deadlines, vocab isolation, guards
+# ----------------------------------------------------------------------
+class RecordingBuilder(FeatureBuilder):
+    """Real builder that records the model ids passed to `build`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[tuple[int, int]] = []
+
+    def build(self, observed, committed, **kwargs):
+        self.calls.append(
+            (
+                int(kwargs.get("predictor_id", 0)),
+                int(kwargs.get("translator_id", 0)),
+            )
+        )
+        return super().build(observed, committed, **kwargs)
+
+
+class RecordingNetwork(torch.nn.Module):
+    """Fake value network that records the model-id tensors it receives."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen_predictor: list[int] = []
+        self.seen_translator: list[int] = []
+
+    def encode(self, numeric, predictor_id, translator_id, src_ids, tgt_ids):
+        del src_ids, tgt_ids
+        self.seen_predictor.extend(
+            int(value) for value in predictor_id.flatten().tolist()
+        )
+        self.seen_translator.extend(
+            int(value) for value in translator_id.flatten().tolist()
+        )
+        return torch.zeros((numeric.size(0), 4), dtype=torch.float32)
+
+    def read_value(self, z):
+        return torch.zeros(z.size(0), dtype=torch.float32)
+
+    def write_values(self, z, actions):
+        batch = z.size(0)
+        count = len(actions)
+        return WriteOutputs(
+            value=torch.ones((batch, count), dtype=torch.float32),
+            error_risk=torch.zeros((batch, count), dtype=torch.float32),
+            no_emit=torch.zeros((batch, count), dtype=torch.float32),
+            expected_emit=torch.ones((batch, count), dtype=torch.float32),
+        )
+
+
+class FakeRuntime:
+    """Minimal runtime: a write emits nothing and EOS returns one word."""
+
+    def execute(self, observed, committed, action, seed):
+        del observed, action, seed
+        return StepResult(
+            candidates=(),
+            selected="",
+            committed_after=tuple(committed),
+            pred_s=0.0,
+            mt_s=0.0,
+            spent_s=0.0,
+            vote_top1=0.0,
+            vote_margin=0.0,
+            vote_entropy=0.0,
+            no_emit=True,
+        )
+
+    def translate(self, sources, prefix, final=False):
+        del sources, prefix, final
+        return ["final words"], 0.0
+
+
+class RecordingCostModel:
+    """Cost model that records the ids used by the rollout lookup."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int, Action]] = []
+
+    def predict(
+        self, predictor_id, translator_id, action, src_words, tgt_words
+    ):
+        del src_words, tgt_words
+        self.calls.append((int(predictor_id), int(translator_id), action))
+        return CostEstimate(0.1, 0.1)
+
+
+def test_rollout_injects_model_pair_ids_into_scoring_and_cost():
+    cfg = ControllerConfig(seed=7, actions=(Action(2, 4),))
+    builder = RecordingBuilder()
+    network = RecordingNetwork()
+    cost_model = RecordingCostModel()
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+
+    trace = run_rollout(
+        sentence,
+        None,
+        None,
+        network,
+        builder,
+        cost_model,
+        cfg,
+        runtime=FakeRuntime(),
+        predictor_id=1,
+        translator_id=1,
+    )
+
+    assert trace.sentence_id == "s0"
+    # The feature builder saw the injected pair on every decision.
+    assert builder.calls and all(pair == (1, 1) for pair in builder.calls)
+    # Q scoring uses the same pair: the encoder received 1/1 tensors.
+    assert network.seen_predictor and set(network.seen_predictor) == {1}
+    assert network.seen_translator and set(network.seen_translator) == {1}
+    # The measured cost lookup reads the vector's ids, so it also sees 1/1.
+    assert cost_model.calls
+    assert all(
+        (predictor_id, translator_id) == (1, 1)
+        for predictor_id, translator_id, _action in cost_model.calls
+    )
+
+
+@dataclass(frozen=True)
+class StubLabeler:
+    """Labeler stub with hand-set rewards for the trajectory test."""
+
+    def oracle_words(self, source, committed):
+        del source, committed
+        return tuple("final words".split())
+
+    def read_outcome(self, committed):
+        return ActionOutcome(
+            action=READ,
+            new_words=(),
+            matched=0,
+            incorrect=0,
+            emitted=0,
+            no_emit=True,
+            next_committed=tuple(committed),
+            pred_s=0.0,
+            mt_s=0.0,
+            vote_top1=0.0,
+            vote_margin=0.0,
+            vote_entropy=0.0,
+        )
+
+    def label_state(self, observed, committed, source, actions, seed):
+        del observed, source, seed
+        specs = {
+            Action(2, 4): (2, ("a", "b")),
+            Action(2, 6): (2, ("x", "y", "z")),
+            Action(4, 6): (1, ("c",)),
+        }
+        outcomes = []
+        for action in actions:
+            matched, words = specs[action]
+            outcomes.append(
+                ActionOutcome(
+                    action=action,
+                    new_words=words,
+                    matched=matched,
+                    incorrect=0,
+                    emitted=len(words),
+                    no_emit=False,
+                    next_committed=tuple(committed) + words,
+                    pred_s=0.1,
+                    mt_s=0.1,
+                    vote_top1=0.75,
+                    vote_margin=0.5,
+                    vote_entropy=0.1,
+                )
+            )
+        return outcomes
+
+
+def test_label_sentence_chooses_max_reward_write_with_bh_tie_break():
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(2, 4), Action(2, 6), Action(4, 6)),
+    )
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+    row = kaggle.label_sentence(StubLabeler(), sentence, stride=100, cfg=cfg)
+
+    assert len(row["states"]) == 1
+    state = row["states"][0]
+    # b2h4 and b2h6 both have matched=2; b4h6 has matched=1. The tie goes to
+    # the smaller b*h (8 for b2h4 vs 12 for b2h6).
+    assert state["chosen"] == "b2h4"
+    assert state["committed_after"] == ["a", "b"]
+    rewards = {
+        outcome["action"]: outcome["reward"] for outcome in state["outcomes"]
+    }
+    assert rewards["b2h4"] == pytest.approx(rewards["b2h6"])
+    assert rewards["b2h4"] > rewards["b4h6"]
+
+
+def test_run_dev_stops_gracefully_when_deadline_has_passed(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+
+    def run(max_hours):
+        return kaggle.run_dev(
+            limit=0,
+            stride=2,
+            output_dir=str(tmp_path),
+            max_hours=max_hours,
+            seed=cfg.seed,
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=harness["sentences"],
+            cfg=cfg,
+            predictor_id=0,
+            translator_id=0,
+            timer=harness["timer"],
+        )
+
+    first = run(max_hours=1.0)
+    assert first["stopped_reason"] is None
+    checkpoint = tmp_path / "checkpoint.pt"
+    assert checkpoint.is_file()
+    before = checkpoint.read_bytes()
+
+    second = run(max_hours=0.0)
+    assert second["stopped_reason"] == "deadline"
+    assert second["trained"] is False
+    assert second["training"]["status"] == "skipped"
+    assert second["rollout"]["n"] == 0
+    # The trained checkpoint is kept rather than overwritten untrained.
+    assert checkpoint.read_bytes() == before
+    assert (tmp_path / "summary.json").is_file()
+    assert (tmp_path / "traces.jsonl").is_file()
+
+
+def test_run_dev_builds_vocab_from_train_buckets_only(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    holdout = Sentence(
+        "dev:0009",
+        "quark hallo welt wir lernen heute .",
+        "quark hello world we learn today .",
+        split="dev",
+    )
+    summary = kaggle.run_dev(
+        limit=0,
+        stride=2,
+        output_dir=str(tmp_path),
+        max_hours=1.0,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=[*harness["sentences"], holdout],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+    assert summary["rollout"]["n"] == 1  # the holdout sentence was rolled out
+    payload = torch.load(
+        tmp_path / "checkpoint.pt", map_location="cpu", weights_only=True
+    )
+    vocab = payload["extra"]["vocab"]
+    assert "quark" not in vocab  # holdout-only word never enters the vocab
+    assert "hallo" in vocab
+
+
+def test_run_dev_and_preflight_reject_test_sentences(tmp_path):
+    harness = make_harness()
+    test_sentence = Sentence(
+        "test:0140",
+        "hallo welt wir lernen heute .",
+        "hello world we learn today .",
+        split="test",
+    )
+    common = dict(
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=[test_sentence, *harness["sentences"]],
+        cfg=harness["cfg"],
+        timer=harness["timer"],
+    )
+    with pytest.raises(ValueError, match="test"):
+        kaggle.run_dev(
+            limit=0,
+            stride=2,
+            output_dir=str(tmp_path / "dev"),
+            max_hours=1.0,
+            **common,
+        )
+    with pytest.raises(ValueError, match="test"):
+        kaggle.run_preflight(
+            limit=3,
+            output_dir=str(tmp_path / "preflight"),
+            **common,
+        )
+
+
+def test_read_jsonl_skips_and_repairs_a_truncated_tail(tmp_path):
+    path = tmp_path / "labels.jsonl"
+    complete = '{"sentence_id": "a"}\n{"sentence_id": "b"}\n'
+    path.write_text(complete + '{"sentence_id": "c"', encoding="utf-8")
+
+    rows = kaggle._read_jsonl(path)
+    assert [row["sentence_id"] for row in rows] == ["a", "b"]
+
+    kaggle._repair_jsonl_tail(path)
+    repaired = path.read_text(encoding="utf-8")
+    assert repaired == complete
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"sentence_id": "c"}\n')
+    assert [row["sentence_id"] for row in kaggle._read_jsonl(path)] == [
+        "a",
+        "b",
+        "c",
+    ]
+
+
+def test_reuse_cost_records_rejects_other_model_pair(tmp_path):
+    path = tmp_path / "cost_records.json"
+    kaggle._write_cost_records(
+        path,
+        [(0, 0, Action(2, 4), 0.1, 0.2)],
+        {"predictor_id": 0, "translator_id": 0},
+    )
+    assert kaggle._reuse_cost_records(path, 0, 0) is not None
+    assert kaggle._reuse_cost_records(path, 1, 1) is None

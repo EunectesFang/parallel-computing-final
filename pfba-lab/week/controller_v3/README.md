@@ -377,9 +377,10 @@ cd pfba-lab/week
   --output-dir outputs/cavc_preflight
 
 # Development run (~4-6 h): label dev hash buckets 2-9, train, and roll out
-# dev holdout bucket 1. `--max-hours` bounds the labeling/rollout loops, and
-# labels.jsonl flushes one row per sentence so a later session resumes by
-# sentence_id.
+# dev holdout bucket 1. `--max-hours` bounds labeling, cost calibration,
+# training, and rollout; when it expires the run writes a partial summary with
+# stopped_reason="deadline" and keeps the last checkpoint. labels.jsonl
+# flushes one row per sentence so a later session resumes by sentence_id.
 "D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle \
   --mode dev --limit 0 --stride 4 --max-hours 10 \
   --predictor small --translator small \
@@ -394,9 +395,11 @@ cd pfba-lab/week
   --output-dir outputs/cavc_confirm
 ```
 
-Each real run writes `summary.json`, `traces.jsonl`, `config.json`,
+`preflight` and `dev` write `summary.json`, `traces.jsonl`, `config.json`,
 `cost_records.json`, and `checkpoint.pt` under `--output-dir`, plus the git
-commit recorded in `summary.json` and the checkpoint. BLEU/COMET carry the
+commit recorded in `summary.json` and the checkpoint. `confirm` writes
+`summary.json`, `traces.jsonl`, and `config.json`; it never trains, so it
+writes no `cost_records.json` or `checkpoint.pt`. BLEU/COMET carry the
 status returned by `run_pfba`: without `sacrebleu` BLEU is
 `{"status": "unavailable"}` with no score, and COMET is `skipped` because
 loading it downloads model weights. No metric is ever invented.

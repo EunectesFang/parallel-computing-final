@@ -261,14 +261,44 @@ def _write_json(path: Path, payload) -> None:
 
 
 def _read_jsonl(path: Path) -> list[dict]:
+    """Read JSONL rows, tolerating one truncated trailing line.
+
+    A hard kill during an append can leave the last line incomplete. That line
+    is skipped so a resumed session is not blocked; every earlier malformed
+    line is still a hard error because it would indicate a corrupt file.
+    """
     if not path.is_file():
         return []
+    lines = [
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
     rows: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
+    for index, line in enumerate(lines):
+        try:
             rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if index == len(lines) - 1:
+                continue
+            raise ValueError(
+                f"{path} has a malformed JSONL row at line {index + 1}"
+            ) from None
     return rows
+
+
+def _repair_jsonl_tail(path: Path) -> None:
+    """Trim a partially written final line so appends stay well-formed.
+
+    `labels.jsonl` is appended and flushed one sentence at a time. If the
+    process is killed mid-write, the file may not end in a newline; truncating
+    back to the last complete line lets the next session resume cleanly.
+    """
+    if not path.is_file():
+        return
+    data = path.read_bytes()
+    if not data or data.endswith(b"\n"):
+        return
+    cut = data.rfind(b"\n")
+    path.write_bytes(data[: cut + 1] if cut >= 0 else b"")
 
 
 def _config_payload(
@@ -597,6 +627,39 @@ def _load_cost_records(path: Path):
     )
 
 
+def _reuse_cost_records(
+    path: Path, predictor_id: int, translator_id: int
+):
+    """Load measured records only when they match the current adapter pair.
+
+    A table measured for ``(0, 0)`` must never price ``(1, 1)``. When the
+    recorded ids differ, the stale file is ignored and the caller recalibrates
+    instead.
+    """
+    loaded = _load_cost_records(path)
+    if loaded is None:
+        return None
+    records, summary = loaded
+    if not records:
+        return None
+    recorded_pid = summary.get("predictor_id")
+    recorded_tid = summary.get("translator_id")
+    mismatch = (
+        recorded_pid is not None and int(recorded_pid) != int(predictor_id)
+    ) or (
+        recorded_tid is not None and int(recorded_tid) != int(translator_id)
+    )
+    if mismatch:
+        print(
+            "[cavc] ignoring cost_records.json for model pair "
+            f"{recorded_pid}/{recorded_tid}; current pair is "
+            f"{predictor_id}/{translator_id}",
+            flush=True,
+        )
+        return None
+    return records, summary
+
+
 def _serialize_outcome(outcome: ActionOutcome, reward: float) -> dict:
     """One outcome with candidate text omitted to keep the labels file small."""
     return {
@@ -713,15 +776,23 @@ def _guard_no_test_sentences(sentences: Sequence, caller: str) -> None:
 # Labeling
 # ----------------------------------------------------------------------
 def _guard_label_sentence(sentence_id: str, split: str) -> None:
+    if not sentence_id:
+        raise ValueError(
+            "label_sentence needs a non-empty sentence_id so the row can be "
+            "resumed and never relabelled"
+        )
     if split == "test" or sentence_id.startswith("test:"):
         raise ValueError(
             f"label_sentence refuses test sentence {sentence_id!r}; labels are "
             "training-only"
         )
-    if sentence_id.startswith("dev:") and is_holdout(sentence_id):
+    # Hash bucket 1 is the dev holdout. The check applies to every id, not
+    # only `dev:`-prefixed ids, so a caller cannot relabel the holdout by
+    # using a different id spelling.
+    if is_holdout(sentence_id):
         raise ValueError(
-            f"label_sentence refuses dev holdout sentence {sentence_id!r} "
-            f"(bucket {HOLDOUT_BUCKET}); the holdout is evaluation-only"
+            f"label_sentence refuses holdout sentence {sentence_id!r} "
+            f"(hash bucket {HOLDOUT_BUCKET}); the holdout is evaluation-only"
         )
 
 
@@ -1030,6 +1101,22 @@ def _targets_from_rows(
     )
 
 
+def _skipped_training(n_samples: int) -> dict:
+    """Training summary used when the wall-clock deadline halts a session."""
+    return {
+        "epochs": 0,
+        "final_loss": 0.0,
+        "value_loss": 0.0,
+        "rank_loss": 0.0,
+        "error_loss": 0.0,
+        "no_emit_loss": 0.0,
+        "emit_loss": 0.0,
+        "n_samples": int(n_samples),
+        "status": "skipped",
+        "reason": "deadline",
+    }
+
+
 def _train_and_write(
     *,
     mode: str,
@@ -1053,35 +1140,63 @@ def _train_and_write(
     model_pair: dict,
     notes: Sequence[str],
     extra_summary: dict | None = None,
+    deadline: float | None = None,
+    initial_stopped_reason: str | None = None,
 ) -> dict:
-    """Train, checkpoint, roll out, and write every artifact for a mode."""
-    trainer = CAVCTrainer(network, cfg, cost_model)
-    training = trainer.fit(targets)
-    mean, std = _feature_stats(states)
+    """Train, checkpoint, roll out, and write every artifact for a mode.
+
+    `deadline` is an absolute `time.perf_counter()` value. It is checked before
+    training and before each rollout sentence; when it has passed the run stops
+    gracefully, sets ``stopped_reason="deadline"``, and still writes the
+    partial summary/traces. An existing checkpoint is loaded instead of being
+    overwritten by an untrained network.
+
+    `model_pair["predictor_id"]` / ``["translator_id"]`` are injected into
+    every rollout feature vector so the network embedding and the cost lookup
+    use the same adapter pair as training and calibration.
+    """
+    stopped_reason = initial_stopped_reason
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "checkpoint.pt"
-    metadata = save_checkpoint(
-        checkpoint_path,
-        network,
-        cfg,
-        mean,
-        std,
-        cost_model,
-        extra={
-            "mode": mode,
-            "split": split,
-            "training": training,
-            "n_targets": len(targets),
-            # Frozen confirmation must rebuild the same word ids; store the
-            # vocabulary and the training length ratio so a test sentence
-            # cannot silently remap the text-encoder inputs.
-            "vocab": list(vocab.id_to_token),
-            "length_ratio": float(builder.rho),
-        },
-    )
+    mean, std = _feature_stats(states)
 
+    trained = False
+    if deadline is not None and time.perf_counter() >= deadline:
+        training = _skipped_training(len(targets))
+        stopped_reason = "deadline"
+    else:
+        trainer = CAVCTrainer(network, cfg, cost_model)
+        training = trainer.fit(targets)
+        trained = True
+
+    training_extra = {
+        "mode": mode,
+        "split": split,
+        "training": training,
+        "n_targets": len(targets),
+        "trained": trained,
+        # Frozen confirmation must rebuild the same word ids; store the
+        # vocabulary and the training length ratio so a test sentence cannot
+        # silently remap the text-encoder inputs.
+        "vocab": list(vocab.id_to_token),
+        "length_ratio": float(builder.rho),
+    }
+    if trained or not checkpoint_path.is_file():
+        metadata = save_checkpoint(
+            checkpoint_path, network, cfg, mean, std, cost_model, extra=training_extra
+        )
+    else:
+        # Keep the last trained checkpoint rather than overwriting it with an
+        # untrained network when this session stopped before training.
+        metadata = load_checkpoint(checkpoint_path, network)
+
+    predictor_id = int(model_pair.get("predictor_id", 0))
+    translator_id = int(model_pair.get("translator_id", 0))
     traces: list[RolloutTrace] = []
     for sentence in _with_split(rollout_sentences, split):
+        if deadline is not None and time.perf_counter() >= deadline:
+            stopped_reason = "deadline"
+            break
         traces.append(
             run_rollout(
                 sentence,
@@ -1092,6 +1207,8 @@ def _train_and_write(
                 cost_model,
                 cfg,
                 timer=timer,
+                predictor_id=predictor_id,
+                translator_id=translator_id,
             )
         )
     rollout_summary = _rollout_summary(traces)
@@ -1127,6 +1244,8 @@ def _train_and_write(
         "n_states": len(states),
         "n_targets": len(targets),
         "training": training,
+        "trained": trained,
+        "stopped_reason": stopped_reason,
         "checkpoint": {
             "path": str(checkpoint_path),
             "format_version": metadata["format_version"],
@@ -1324,11 +1443,18 @@ def run_dev(
 
     Labels are appended to ``output_dir/labels.jsonl`` one row per sentence and
     flushed, so a session that hits `max_hours` can resume: existing
-    `sentence_id` values are skipped and never relabelled. Holdout bucket 1 and
-    every test sentence are excluded from labeling by construction.
+    `sentence_id` values are skipped and never relabelled, and a truncated
+    trailing line is trimmed before appending. The vocabulary and length ratio
+    are built from train buckets 2-9 only, so holdout bucket 1 contributes no
+    vocabulary entries. Holdout bucket 1 and every test sentence are excluded
+    from labeling by construction.
 
-    `max_hours` bounds the labeling and rollout loops. A single training call
-    is not preempted mid-epoch; the checkpoint written at the end is complete.
+    `max_hours` bounds labeling, cost calibration, training, and the rollout
+    loop. When the deadline passes, the run stops gracefully, writes the
+    partial ``summary.json``/``traces.jsonl`` with
+    ``stopped_reason="deadline"``, and keeps the last trained checkpoint.
+    A training call is not preempted mid-epoch; it is skipped if the deadline
+    has already passed when training would start.
     """
     pfba = _require_run_pfba()
     cfg = cfg or ControllerConfig(seed=int(seed))
@@ -1375,12 +1501,15 @@ def run_dev(
     tid = _pair_id(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
-    builder, network, vocab = _components(cfg, sentences)
+    # Train-only vocabulary: holdout bucket 1 must not contribute entries, or
+    # its words would leak into the frozen text encoder.
+    builder, network, vocab = _components(cfg, train_sentences)
     labeler = CounterfactualLabeler(predictor, translator, cfg, timer=timer)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     labels_path = output_dir / "labels.jsonl"
+    _repair_jsonl_tail(labels_path)
     done = {str(row.get("sentence_id", "")) for row in _read_jsonl(labels_path)}
 
     newly_labeled = 0
@@ -1426,16 +1555,51 @@ def run_dev(
         },
     )
     if not rows:
+        if time.perf_counter() >= deadline:
+            summary = {
+                "mode": "dev",
+                "split": "dev",
+                "stopped_reason": "deadline",
+                "trained": False,
+                "n_label_rows": 0,
+                "n_targets": 0,
+                "newly_labeled": newly_labeled,
+                "train_sentences": len(train_sentences),
+                "holdout_sentences": len(holdout_sentences),
+                "max_hours": max_hours,
+                "notes": ["No label row was written before the deadline."],
+            }
+            _write_json(output_dir / "summary.json", summary)
+            _write_traces(output_dir / "traces.jsonl", [])
+            return summary
         raise RuntimeError(
             "run_dev has no labeled rows yet; rerun with more time to label "
             "at least one dev train sentence"
         )
 
-    loaded_cost = _load_cost_records(output_dir / "cost_records.json")
+    stopped_reason = "deadline" if stopped_for_deadline else None
+    loaded_cost = _reuse_cost_records(
+        output_dir / "cost_records.json", pid, tid
+    )
     if loaded_cost is not None:
         cost_records, cost_summary = loaded_cost
         cost_summary = dict(cost_summary)
         cost_summary["reused_from_artifact"] = True
+    elif time.perf_counter() >= deadline:
+        print(
+            "[cavc] deadline reached before cost calibration; using an empty "
+            "cost table",
+            flush=True,
+        )
+        cost_records = []
+        cost_summary = {
+            "status": "skipped",
+            "reason": "deadline",
+            "n_records": 0,
+            "predictor_id": pid,
+            "translator_id": tid,
+        }
+        stopped_reason = "deadline"
     else:
         cost_records, cost_summary = calibrate_cost_records(
             predictor,
@@ -1454,13 +1618,6 @@ def run_dev(
     targets, states = _targets_from_rows(rows, builder, cfg, pid, tid)
     if not targets:
         raise RuntimeError("run_dev rebuilt no training targets from labels")
-
-    rollout_pool: list = []
-    for sentence in holdout_sentences:
-        if time.perf_counter() > deadline:
-            stopped_for_deadline = True
-            break
-        rollout_pool.append(sentence)
 
     model_pair = {
         "predictor": predictor_name,
@@ -1495,9 +1652,11 @@ def run_dev(
         translator=translator,
         timer=timer,
         output_dir=output_dir,
-        rollout_sentences=rollout_pool,
+        rollout_sentences=holdout_sentences,
         model_pair=model_pair,
         notes=notes,
+        deadline=deadline,
+        initial_stopped_reason=stopped_reason,
         extra_summary={
             "stride": stride,
             "newly_labeled": newly_labeled,
@@ -1645,6 +1804,8 @@ def run_confirm(
             cost_model,
             cfg,
             timer=timer,
+            predictor_id=pid,
+            translator_id=tid,
         )
         for sentence in _with_split(sentences, "test")
     ]

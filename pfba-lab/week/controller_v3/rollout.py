@@ -272,6 +272,8 @@ def run_rollout(
     *,
     runtime=None,
     post_controller=None,
+    predictor_id: int = 0,
+    translator_id: int = 0,
 ) -> RolloutTrace:
     """Run one greedy sentence rollout and return a `RolloutTrace`.
 
@@ -283,6 +285,11 @@ def run_rollout(
     when supplied, must expose
     ``decide(z_pre, current_branches, horizon, vote_entropy, vote_margin,
     no_emit_prob, spent_s, cfg) -> PostDecision``.
+
+    `predictor_id` / `translator_id` are injected into every online feature
+    vector through `builder.build`. They select the network's model embeddings
+    and key the measured cost lookup, so a real-model caller must pass the
+    ids resolved for its adapter pair; the default 0/0 is the small pair.
 
     The network is forced into eval mode for scoring (its Dropout would
     otherwise make Q values stochastic and non-reproducible) and the previous
@@ -304,6 +311,8 @@ def run_rollout(
             timer,
             runtime=runtime,
             post_controller=post_controller,
+            predictor_id=predictor_id,
+            translator_id=translator_id,
         )
     finally:
         if (
@@ -326,6 +335,8 @@ def _run_rollout_impl(
     *,
     runtime=None,
     post_controller=None,
+    predictor_id: int = 0,
+    translator_id: int = 0,
 ) -> RolloutTrace:
     """Body of `run_rollout`; assumes the network is already in eval mode."""
     cfg = cfg if cfg is not None else ControllerConfig()
@@ -426,6 +437,8 @@ def _run_rollout_impl(
             committed,
             history=history,
             runtime=runtime_info,
+            predictor_id=int(predictor_id),
+            translator_id=int(translator_id),
         )
         z_pre, q_read, q_by_action, no_emit_by_action = _score_state(
             network, vector, query_actions
