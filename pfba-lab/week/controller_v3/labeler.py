@@ -233,9 +233,17 @@ class CounterfactualLabeler:
         Training-only: this is the label side of the leakage boundary. The
         translation is tokenized by ``text.split()`` so a trailing space cannot
         create a phantom word.
+
+        The oracle is timed under its own ``"oracle"`` stage. It must never be
+        billed to the ``"mt"`` bucket that action labels read: action ``mt_s``
+        comes from the specific horizon translation call, and keeping the
+        oracle on a distinct stage makes that separation explicit in
+        `timer.seconds` as well.
         """
         prefix = " ".join(tuple(committed))
-        outputs, _seconds = self.runtime.translate([source], prefix)
+        outputs, _seconds = self._timed(
+            "oracle", lambda: self._translate_raw([source], prefix)
+        )
         text = outputs[0] if outputs else ""
         return tuple(text.split())
 
@@ -287,6 +295,12 @@ class CounterfactualLabeler:
                 "pred",
                 lambda: self.sample_candidates(observed, max_b, max_h, seed),
             )
+            if len(rows) < max_b:
+                raise RuntimeError(
+                    f"sample_candidates returned {len(rows)} rows but the "
+                    f"largest action needs {max_b}; a (b, h) label must be "
+                    "voted over exactly b candidates, not a shortened pool"
+                )
             oracle = self.oracle_words(source, committed_tuple)
 
             # One translation per unique horizon, using that horizon's maximum
@@ -308,6 +322,13 @@ class CounterfactualLabeler:
                 ]
                 outputs, mt_s = self.runtime.translate(requests, prefix)
                 outputs = list(outputs)
+                if len(outputs) < need:
+                    raise RuntimeError(
+                        f"translator returned {len(outputs)} outputs for "
+                        f"{len(requests)} requests at horizon {horizon}; a "
+                        f"(b, h) label needs {need} translated candidates, not "
+                        "a shortened pool"
+                    )
 
                 for action in group:
                     pool = tuple(outputs[: int(action.branches)])
@@ -344,6 +365,15 @@ class CounterfactualLabeler:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _translate_raw(
+        self, requests: Sequence[str], prefix: str
+    ) -> list[str]:
+        """Translate without a stage timer; callers time the stage they own."""
+        sources = list(requests)
+        if run_pfba is not None and hasattr(run_pfba, "call_translate_batch"):
+            return list(run_pfba.call_translate_batch(self.translator, sources, prefix))
+        return list(self.translator.translate_batch(sources, prefix))
+
     def _timed(self, name: str, function):
         runner = getattr(self.timer, "run", None)
         if callable(runner):

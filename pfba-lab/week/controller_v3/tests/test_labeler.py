@@ -95,6 +95,18 @@ class MappingTranslator:
         return [self.mapping.get(source, "") for source in sources]
 
 
+class ShortTranslator(MappingTranslator):
+    """Returns at most `limit` outputs regardless of how many were requested."""
+
+    def __init__(self, mapping, limit):
+        super().__init__(mapping)
+        self.limit = int(limit)
+
+    def translate_batch(self, sources, prefix, **kwargs):
+        outputs = super().translate_batch(sources, prefix, **kwargs)
+        return outputs[: self.limit]
+
+
 class RecordingTimer:
     """Returns an increasing fake duration per `run` call."""
 
@@ -122,6 +134,12 @@ def basic_case(actions, timer=None):
     labeler = make_labeler(predictor, translator, timer=timer)
     outcomes = labeler.label_state(OBSERVED, COMMITTED, SOURCE, actions, seed=3)
     return predictor, translator, outcomes
+
+
+def _timed_case():
+    timer = RecordingTimer()
+    predictor, translator, outcomes = basic_case([Action(2, 4)], timer=timer)
+    return predictor, translator, outcomes, timer
 
 
 # ----------------------------------------------------------------------
@@ -205,8 +223,19 @@ def test_oracle_words_translates_source_only_with_committed_prefix():
     words = labeler.oracle_words(SOURCE, ["the", "cat"])
 
     assert words == ("the", "cat", "sits")
-    assert translator.calls == [([SOURCE], "the cat", {"final": False})]
+    assert translator.calls == [([SOURCE], "the cat", {})]
     assert predictor.calls == []  # the oracle path samples nothing
+
+
+def test_oracle_translation_uses_separate_timer_stage():
+    _predictor, _translator, outcomes, timer = _timed_case()
+
+    stage_names = [name for name, _seconds in timer.calls]
+    assert stage_names == ["pred", "oracle", "mt"]
+    # The oracle's 2.0 seconds are not any action's mt_s; the action reads the
+    # horizon translation stage (3.0), not the oracle stage.
+    assert outcomes[0].mt_s == 3.0
+    assert outcomes[0].pred_s == 1.0
 
 
 def test_label_state_separates_oracle_and_candidate_translation():
@@ -298,6 +327,35 @@ def test_label_state_fills_read_without_extra_translation():
         RowsPredictor([]), MappingTranslator()
     ).read_outcome(COMMITTED)
     assert len(translator.calls) == 2  # oracle + one horizon, READ adds none
+
+
+# ----------------------------------------------------------------------
+# Budget guards
+# ----------------------------------------------------------------------
+def test_label_state_raises_on_short_candidate_pool():
+    predictor = RowsPredictor([[1, 2], [1, 2]])  # fewer than max_b=4
+    translator = MappingTranslator({SOURCE: ORACLE, REQUEST: CANDIDATE})
+    labeler = make_labeler(predictor, translator)
+
+    with pytest.raises(RuntimeError, match="exactly b candidates"):
+        labeler.label_state(OBSERVED, COMMITTED, SOURCE, [Action(4, 4)], seed=1)
+
+
+def test_label_state_raises_on_empty_candidate_pool():
+    predictor = RowsPredictor([])
+    labeler = make_labeler(predictor, MappingTranslator({SOURCE: ORACLE}))
+
+    with pytest.raises(RuntimeError):
+        labeler.label_state(OBSERVED, COMMITTED, SOURCE, [Action(2, 4)], seed=1)
+
+
+def test_label_state_raises_on_short_translation_output():
+    predictor = RowsPredictor([[1, 2], [1, 2], [1, 2], [1, 2]])
+    translator = ShortTranslator({SOURCE: ORACLE, REQUEST: CANDIDATE}, limit=2)
+    labeler = make_labeler(predictor, translator)
+
+    with pytest.raises(RuntimeError, match="translated candidates"):
+        labeler.label_state(OBSERVED, COMMITTED, SOURCE, [Action(4, 4)], seed=1)
 
 
 # ----------------------------------------------------------------------
