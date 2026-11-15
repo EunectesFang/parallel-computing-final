@@ -101,6 +101,7 @@ def summarize_traces(
     traces: Sequence,
     *,
     include_comet: bool = False,
+    include_bleu: bool = True,
     comet_model: str = DEFAULT_COMET_MODEL,
     comet_device: str = "cpu",
 ) -> dict:
@@ -110,6 +111,9 @@ def summarize_traces(
     non-``None`` traces, mean and P95 virtual completion, the aggregate read
     fraction and action histogram, and a flattened per-step record list. COMET
     runs only when `include_comet` is true, because it downloads a model.
+    `include_bleu=False` skips the BLEU call entirely; callers that know their
+    hypotheses are synthetic use it so a locally installed `sacrebleu` cannot
+    produce a real-looking score for meaningless data.
     """
     traces = list(traces)
     n = len(traces)
@@ -135,6 +139,11 @@ def summarize_traces(
             record["sentence_id"] = trace.sentence_id
             steps.append(record)
 
+    if include_bleu:
+        bleu = corpus_bleu(hypotheses, references)
+    else:
+        bleu = {"status": "unavailable", "reason": "BLEU disabled by caller"}
+
     if include_comet:
         comet = comet_score(
             hypotheses, sources, references, comet_model, comet_device
@@ -147,7 +156,7 @@ def summarize_traces(
 
     return {
         "n": n,
-        "bleu": corpus_bleu(hypotheses, references),
+        "bleu": bleu,
         "comet": comet,
         "laal": _mean(laal_values),
         "completion_s": {

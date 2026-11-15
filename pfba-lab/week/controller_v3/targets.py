@@ -83,7 +83,9 @@ def build_action_targets(
     `next_actions` defaults to ``()`` and is replaced by
     ``(READ, *cfg.actions)`` whenever `next_state` is supplied. Including READ
     in the backup is required: the one-step target must be allowed to value
-    waiting, otherwise it systematically overvalues writing.
+    waiting, otherwise it systematically overvalues writing. When the caller
+    supplies a non-empty `next_actions`, that sequence is authoritative; it
+    must include READ if READ is meant to participate in the backup.
 
     An empty `state_key` is replaced by `derive_state_key(state)`. Production
     callers should still pass an explicit sentence/position key, because two

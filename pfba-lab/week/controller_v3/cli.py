@@ -12,10 +12,12 @@ Three modes exist:
   they need a real predictor/translator adapter, and this repository does not
   download or load model weights from the CLI. No metric is ever fabricated.
 
-BLEU is delegated to `run_pfba.corpus_bleu`; when `sacrebleu` is not installed
-the summary reports ``"status": "unavailable"`` and no score. COMET is opt-in
-(``--comet``) because loading the model downloads weights; it is skipped by
-default.
+The smoke summary never reports a translation-quality score. Its sentences are
+synthetic, so BLEU is forced to ``{"status": "unavailable", "reason":
+"synthetic smoke data"}`` without calling `corpus_bleu`, even when `sacrebleu`
+is installed. COMET is always skipped in the smoke because loading it downloads
+model weights; `evaluator.summarize_traces(include_comet=True)` remains the
+opt-in API for real-data callers.
 """
 
 from __future__ import annotations
@@ -70,6 +72,17 @@ SMOKE_ACTIONS = (READ, Action(2, 4), Action(4, 6))
 
 SMOKE_EPOCHS = 5
 SMOKE_STAGE_SECONDS = 0.05
+
+# The smoke dataset is synthetic, so no BLEU/COMET score is meaningful.
+SMOKE_BLEU_STATUS = {
+    "status": "unavailable",
+    "reason": "synthetic smoke data",
+}
+SMOKE_COMET_STATUS = {
+    "status": "skipped",
+    "reason": "synthetic smoke data; COMET would download weights and score "
+    "meaningless text",
+}
 
 
 # ----------------------------------------------------------------------
@@ -281,7 +294,8 @@ def _run_dry_run(args) -> int:
 
 def _run_smoke(args) -> int:
     """Run the synthetic end-to-end CPU path and write report artifacts."""
-    # Imported lazily so `--dry-run` never touches torch or model code.
+    # Imported lazily so `--dry-run` constructs no model and loads no weights.
+    # The package import itself still imports torch through the public exports.
     from dataclasses import replace
 
     import torch
@@ -401,7 +415,14 @@ def _run_smoke(args) -> int:
                 timer=timer,
             )
         )
-    rollout_summary = summarize_traces(traces, include_comet=bool(args.comet))
+    # Synthetic sentences: skip BLEU entirely and force the no-score status.
+    # This is deliberate even when `sacrebleu` is installed, so the smoke can
+    # never emit a real-looking translation-quality number.
+    rollout_summary = summarize_traces(
+        traces, include_comet=False, include_bleu=False
+    )
+    rollout_summary["bleu"] = dict(SMOKE_BLEU_STATUS)
+    rollout_summary["comet"] = dict(SMOKE_COMET_STATUS)
 
     report = {
         "mode": "smoke",
@@ -428,10 +449,10 @@ def _run_smoke(args) -> int:
         "rollout": rollout_summary,
         "notes": [
             "Synthetic three-sentence smoke data; not Kaggle data.",
-            "BLEU is delegated to run_pfba and is unavailable while sacrebleu "
-            "is not installed.",
-            "COMET is skipped unless --comet is passed; loading it downloads "
-            "model weights.",
+            "BLEU is forced to unavailable for the smoke and corpus_bleu is "
+            "never called, even when sacrebleu is installed.",
+            "COMET is always skipped for the smoke because its text is "
+            "synthetic; loading it would also download model weights.",
         ],
     }
 
@@ -497,11 +518,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--seed", type=int, default=13, help="random seed for the smoke path"
-    )
-    parser.add_argument(
-        "--comet",
-        action="store_true",
-        help="opt in to COMET scoring in the smoke summary (downloads weights)",
     )
     return parser
 

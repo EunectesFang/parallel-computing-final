@@ -14,11 +14,19 @@ Loading is strict: every key, tensor shape, and feature-stat length is checked
 against the target network and the stored config before any parameter is
 copied. A mismatch raises `ValueError` naming every offending tensor instead of
 letting `load_state_dict` fail with a partially loaded module.
+
+Trust boundary: `load_checkpoint` calls `torch.load(..., weights_only=True)`.
+The payload is restricted to tensors and primitive containers (dict, list,
+str, int, float, bool, None), which is exactly what `save_checkpoint` writes.
+A file that needs arbitrary unpickling is rejected with a clear `ValueError`
+because loading an untrusted pickle can execute code. Only load checkpoints
+you created or otherwise trust.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import pickle
 import subprocess
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -62,6 +70,21 @@ def _to_float_list(values) -> list[float]:
     if isinstance(values, (int, float)):
         return [float(values)]
     return [float(value) for value in values]
+
+
+def _checked_float_list(values, field: str) -> list[float]:
+    """Like `_to_float_list`, but always raises `ValueError` on bad input.
+
+    Checkpoint metadata comes from an untrusted file shape, so a malformed
+    scalar or container should be reported as a clear metadata error rather
+    than leaking a `TypeError` from `float(...)`.
+    """
+    try:
+        return _to_float_list(values)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"checkpoint {field} must be a list of numbers or null"
+        ) from exc
 
 
 def _to_cpu(value):
@@ -174,8 +197,12 @@ def _metadata(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "format_version": int(payload.get("format_version", 0)),
         "config": config,
-        "feature_mean": [float(value) for value in payload.get("feature_mean", [])],
-        "feature_std": [float(value) for value in payload.get("feature_std", [])],
+        "feature_mean": _checked_float_list(
+            payload.get("feature_mean"), "feature_mean"
+        ),
+        "feature_std": _checked_float_list(
+            payload.get("feature_std"), "feature_std"
+        ),
         "cost_records": _deserialize_cost_records(payload.get("cost_records", [])),
         "seed": int(payload.get("seed", config.get("seed", 0))),
         "git_commit": payload.get("git_commit"),
@@ -250,7 +277,10 @@ def load_checkpoint(path, network) -> dict[str, Any]:
     The saved and target state dicts are compared key by key first. Missing
     keys, unexpected keys, and shape mismatches all raise a single
     `ValueError` that lists the offending tensors, so a mismatched
-    architecture never leaves a half-loaded network behind.
+    architecture never leaves a half-loaded network behind. An unsupported
+    `format_version`, malformed feature statistics, and payloads that would
+    require unsafe unpickling also raise `ValueError`; the loader never falls
+    back to `weights_only=False`.
     """
     if not hasattr(network, "state_dict"):
         raise TypeError("network must be a torch nn.Module with state_dict()")
@@ -259,10 +289,36 @@ def load_checkpoint(path, network) -> dict[str, Any]:
     if not source.is_file():
         raise FileNotFoundError(f"checkpoint not found: {source}")
 
-    payload = torch.load(source, map_location="cpu", weights_only=False)
+    # `weights_only=True` restricts the payload to tensors and primitive
+    # containers. Never fall back to arbitrary unpickling: a malicious pickle
+    # can execute code, and only trusted checkpoints are safe.
+    try:
+        payload = torch.load(source, map_location="cpu", weights_only=True)
+    except TypeError as exc:
+        raise RuntimeError(
+            "this torch build does not support weights_only=True; refusing to "
+            "unpickle the checkpoint because only trusted files are safe"
+        ) from exc
+    except (pickle.UnpicklingError, RuntimeError, EOFError) as exc:
+        raise ValueError(
+            f"cannot load {source} with weights_only=True: the checkpoint "
+            "contains objects that are not tensors or primitive containers. "
+            "Only load trusted controller_v3 checkpoints; loading an arbitrary "
+            "pickle can execute code. Re-save the file with "
+            "controller_v3.checkpoint.save_checkpoint. "
+            f"Original error: {type(exc).__name__}: {exc}"
+        ) from exc
+
     if not isinstance(payload, dict) or "state_dict" not in payload:
         raise ValueError(
             f"{source} is not a controller_v3 checkpoint: missing 'state_dict'"
+        )
+
+    version = payload.get("format_version")
+    if version != CHECKPOINT_FORMAT_VERSION:
+        raise ValueError(
+            f"unsupported checkpoint format_version {version!r}; this build "
+            f"reads version {CHECKPOINT_FORMAT_VERSION}"
         )
 
     incoming = payload["state_dict"]

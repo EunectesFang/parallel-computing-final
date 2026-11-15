@@ -272,8 +272,13 @@ network.
 
 * `evaluator.corpus_bleu` delegates to `run_pfba.corpus_bleu`. Without
   `sacrebleu` it returns `status="unavailable"` and no score.
-* `evaluator.comet_score` delegates to `run_pfba.comet_score`; it is opt-in
-  because the model download needs network access.
+* The `--smoke` path never calls `corpus_bleu` and always writes
+  `{"status": "unavailable", "reason": "synthetic smoke data"}`. This holds
+  even when `sacrebleu` is installed: the smoke sentences are synthetic, so no
+  score would be meaningful.
+* `evaluator.comet_score` delegates to `run_pfba.comet_score`;
+  `summarize_traces(include_comet=True)` is the opt-in API because the model
+  download needs network access. The smoke always skips COMET.
 * `reward.terminal_reward` is only a negative absolute word-count difference.
   It is not COMET and is never reported as a translation-quality score.
 * `paired_bootstrap` raises `MetricUnavailableError` when per-sentence BLEU
@@ -323,7 +328,9 @@ cd pfba-lab/week
 This writes `checkpoint.pt`, `summary.json`, and `traces.jsonl` under the
 output directory. `summary.json` contains the training losses, the checkpoint
 metadata, and the rollout summary; `traces.jsonl` contains one JSON record per
-sentence with every decision step.
+sentence with every decision step. The smoke forces BLEU to `unavailable` and
+COMET to `skipped` because its three sentences are synthetic; no
+translation-quality score is produced or implied.
 
 `--train-labels PATH` and `--rollout` are parsed but raise
 `NotImplementedError`: they need a real predictor/translator adapter, and the

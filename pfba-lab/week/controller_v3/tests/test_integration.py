@@ -9,12 +9,14 @@ paths.
 
 import importlib.util
 import inspect
+import json
 import math
 from dataclasses import dataclass, replace
 
 import pytest
 import torch
 
+from controller_v3 import cli, evaluator
 from controller_v3.action import READ, Action
 from controller_v3.checkpoint import load_checkpoint, save_checkpoint
 from controller_v3.config import ControllerConfig
@@ -549,3 +551,111 @@ def test_integration_train_checkpoint_and_rollout(tmp_path):
         assert summary["bleu"]["status"] == "unavailable"
         assert "score" not in summary["bleu"]
     assert summary["comet"]["status"] == "skipped"
+
+
+# ----------------------------------------------------------------------
+# CLI acceptance path and metric honesty
+# ----------------------------------------------------------------------
+def test_cli_smoke_writes_summary_and_traces(tmp_path):
+    exit_code = cli.main(["--smoke", "--output-dir", str(tmp_path)])
+    assert exit_code == 0
+    summary_path = tmp_path / "summary.json"
+    traces_path = tmp_path / "traces.jsonl"
+    assert summary_path.is_file()
+    assert traces_path.is_file()
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["mode"] == "smoke"
+    assert summary["n_targets"] == 9
+    assert summary["rollout"]["n"] == 2
+    assert summary["rollout"]["bleu"] == cli.SMOKE_BLEU_STATUS
+    assert summary["rollout"]["comet"] == cli.SMOKE_COMET_STATUS
+
+    trace_lines = traces_path.read_text(encoding="utf-8").splitlines()
+    assert len(trace_lines) == 2
+    for line in trace_lines:
+        record = json.loads(line)
+        assert record["sentence_id"] in {"smoke-1", "smoke-2"}
+        assert record["steps"]
+
+
+def test_smoke_forces_unavailable_bleu_even_when_available(monkeypatch, tmp_path):
+    """Pretend sacrebleu/BLEU is available; the smoke must still not call it."""
+    calls = []
+
+    def fake_corpus_bleu(hypotheses, references):
+        calls.append((list(hypotheses), list(references)))
+        return {"status": "ok", "score": 99.9}
+
+    monkeypatch.setattr(evaluator, "corpus_bleu", fake_corpus_bleu)
+    if evaluator.run_pfba is not None:
+        monkeypatch.setattr(
+            evaluator.run_pfba,
+            "corpus_bleu",
+            lambda *args, **kwargs: {"status": "ok", "score": 99.9},
+        )
+        monkeypatch.setattr(evaluator.run_pfba, "comet_score", fake_corpus_bleu)
+
+    assert cli.main(["--smoke", "--output-dir", str(tmp_path)]) == 0
+    assert calls == []
+
+    summary = json.loads(
+        (tmp_path / "summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["rollout"]["bleu"] == cli.SMOKE_BLEU_STATUS
+    assert summary["rollout"]["bleu"]["status"] == "unavailable"
+    assert "score" not in summary["rollout"]["bleu"]
+    assert summary["rollout"]["comet"] == cli.SMOKE_COMET_STATUS
+
+
+# ----------------------------------------------------------------------
+# Checkpoint trust and version guards
+# ----------------------------------------------------------------------
+def test_checkpoint_rejects_unknown_format_version(tmp_path):
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20)
+    path = tmp_path / "controller.pt"
+    save_checkpoint(
+        path, network, cfg, [0.0] * cfg.numeric_dim, [1.0] * cfg.numeric_dim, None
+    )
+
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    payload["format_version"] = 999
+    torch.save(payload, path)
+
+    with pytest.raises(ValueError, match="format_version"):
+        load_checkpoint(path, CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20))
+
+
+def test_checkpoint_rejects_unsafe_pickle_payload(tmp_path):
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20)
+    path = tmp_path / "unsafe.pt"
+    save_checkpoint(
+        path,
+        network,
+        cfg,
+        [0.0] * cfg.numeric_dim,
+        [1.0] * cfg.numeric_dim,
+        None,
+        extra={"bad": object()},
+    )
+
+    with pytest.raises(ValueError, match="trusted|weights_only"):
+        load_checkpoint(path, CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20))
+
+
+def test_checkpoint_rejects_malformed_feature_stats(tmp_path):
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20)
+    path = tmp_path / "controller.pt"
+    save_checkpoint(
+        path, network, cfg, [0.0] * cfg.numeric_dim, [1.0] * cfg.numeric_dim, None
+    )
+
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    payload["feature_mean"] = "not-a-list-of-numbers"
+    torch.save(payload, path)
+
+    with pytest.raises(ValueError, match="feature_mean"):
+        load_checkpoint(path, CAVCNetwork(cfg, src_vocab_size=20, tgt_vocab_size=20))
