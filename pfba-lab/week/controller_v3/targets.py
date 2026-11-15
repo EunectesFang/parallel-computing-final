@@ -83,6 +83,7 @@ def build_action_targets(
     tgt_words_after_per_outcome: Sequence[int] | None = None,
     terminal: bool = False,
     terminal_value: float | None = None,
+    terminal_values: Sequence[float] | None = None,
     backlog: float = 0.0,
     source_advance: int = 1,
     state_key: str = "",
@@ -103,6 +104,9 @@ def build_action_targets(
       used when `next_states` is ``None``.
     * `terminal=True` forces every row to be terminal: `next_state=None`,
       `next_actions=()`, and `value_target=terminal_value` (no bootstrap).
+      `terminal_values` may instead carry one value per outcome; each action
+      reaches a different committed prefix, so its terminal target must be
+      evaluated on that prefix rather than sharing the behavior action's.
 
     Delay:
 
@@ -153,6 +157,11 @@ def build_action_targets(
             f"got {len(tgt_words_after_per_outcome)} values for "
             f"{len(outcome_list)} outcomes"
         )
+    if terminal_values is not None and len(terminal_values) != len(outcome_list):
+        raise ValueError(
+            "terminal_values must pair one-to-one with outcomes: got "
+            f"{len(terminal_values)} values for {len(outcome_list)} outcomes"
+        )
 
     current_tgt = int(round(float(state.numeric[TGT_WORDS_INDEX])))
 
@@ -160,9 +169,12 @@ def build_action_targets(
     for index, outcome in enumerate(outcome_list):
         action = outcome.action
         if terminal:
-            value_target = (
-                float(terminal_value) if terminal_value is not None else 0.0
-            )
+            if terminal_values is not None:
+                value_target = float(terminal_values[index])
+            else:
+                value_target = (
+                    float(terminal_value) if terminal_value is not None else 0.0
+                )
         elif src_words_after is not None:
             if tgt_words_after_per_outcome is not None:
                 words_after = int(tgt_words_after_per_outcome[index])

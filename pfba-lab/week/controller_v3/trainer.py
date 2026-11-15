@@ -344,7 +344,6 @@ class CAVCTrainer:
         self.network.train()
         self.target_network.eval()
         rng = random.Random(self.cfg.seed)
-        batch_size = max(1, int(self.train_config.batch_size))
         sample_count = len(targets)
         update_every = max(1, int(self.cfg.target_update_every))
         target_seconds = 0.0
@@ -358,8 +357,7 @@ class CAVCTrainer:
             target_values = self.compute_targets(targets)
             target_seconds += max(0.0, time.perf_counter() - target_start)
             target_calls += 1
-            order = list(range(sample_count))
-            rng.shuffle(order)
+            batches_of_indices = self._state_group_batches(targets, rng)
 
             epoch_totals = {
                 "total": 0.0,
@@ -371,8 +369,7 @@ class CAVCTrainer:
             }
             batches = 0
 
-            for start in range(0, sample_count, batch_size):
-                indices = order[start : start + batch_size]
+            for indices in batches_of_indices:
                 batch = [targets[index] for index in indices]
                 batch_targets = [target_values[index] for index in indices]
 
@@ -411,6 +408,51 @@ class CAVCTrainer:
             "target_seconds": float(target_seconds),
             "target_calls": int(target_calls),
         }
+
+    def _state_group_batches(
+        self,
+        targets: Sequence[ActionTarget],
+        rng: random.Random,
+    ) -> list[list[int]]:
+        """Shuffle whole state groups and assemble complete-group batches.
+
+        The pairwise ranking loss only pairs rows that share a batch, and
+        production targets are contiguous runs of ``1 + len(cfg.actions)`` rows
+        per state. Shuffling individual rows and slicing fixed-size batches
+        therefore leaves almost no same-state pairs (the loss is inert). This
+        groups rows by `state_key` first, shuffles the groups, and fills each
+        batch with whole groups only. A group larger than `batch_size` becomes
+        its own variable-size batch so the ranking signal is never split.
+
+        Rows with an empty `state_key` carry no state identity and are each
+        their own group; the ranking loss skips empty keys anyway, but keeping
+        them singletons avoids merging unrelated rows into one "group".
+        """
+        batch_size = max(1, int(self.train_config.batch_size))
+        grouped: dict[str, list[int]] = {}
+        groups: list[list[int]] = []
+        for index, target in enumerate(targets):
+            key = target.state_key
+            if not key:
+                groups.append([index])
+            else:
+                grouped.setdefault(key, []).append(index)
+        groups.extend(grouped.values())
+        rng.shuffle(groups)
+
+        batches: list[list[int]] = []
+        current: list[int] = []
+        for group in groups:
+            if current and len(current) + len(group) > batch_size:
+                batches.append(current)
+                current = []
+            current.extend(group)
+            if len(current) >= batch_size:
+                batches.append(current)
+                current = []
+        if current:
+            batches.append(current)
+        return batches
 
     def _batch_loss(
         self,

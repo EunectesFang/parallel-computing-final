@@ -32,10 +32,14 @@ A labels row holds the sentence id, split, source, ``label_format``, the
 behavior policy (``read_prob`` and the fixed write action), and one entry per
 decision position with ``read_pos``, ``observed``, ``successor_observed``,
 ``committed_before``/``committed_after``, ``oracle_words``, the behavior-chosen
-action, the pre-action ``HistoryTracker`` snapshot, a ``terminal`` flag and
-``terminal_value``, and every action outcome. Each outcome carries
-``matched`` / ``incorrect`` / ``emitted`` / ``next_committed`` / timing / vote
-statistics. Full candidate strings are deliberately omitted. Training rebuilds
+action, the pre-action ``HistoryTracker`` snapshot, a ``terminal`` flag, and
+every action outcome. At a terminal state each outcome carries its own
+``terminal_value``, computed on that action's committed prefix. Each outcome
+also carries ``matched`` / ``incorrect`` / ``emitted`` / ``next_committed`` /
+timing / vote statistics. Full candidate strings are deliberately omitted.
+Rows stamp ``predictor_id`` / ``translator_id`` / ``read_prob`` / ``rho`` and a
+vocabulary fingerprint, and a resumed dev run refuses rows from another
+context. Training rebuilds
 each decision state through the stored tracker snapshot and each action's own
 successor from its ``next_committed``, so training sees the same live History
 features as serving without persisting a 34-float vector per action.
@@ -55,12 +59,14 @@ pair; a table measured for ``(0, 0)`` must not be used to price ``(1, 1)``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
 import statistics
 import subprocess
 import time
+import warnings
 from dataclasses import asdict, dataclass, replace as dataclass_replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -133,7 +139,9 @@ DEFAULT_CONFIRM_LIMIT = 64
 # appended into the same resumable file. Format 5 stores each outcome's
 # `marginal_wall_s` so the successor clock is rebuilt from pipeline wall time
 # instead of the labeler's serial max-b measurement.
-LABEL_FORMAT = 5
+# 6: each outcome persists its own prefix-conditioned terminal value and rows
+# stamp the pair/read_prob/vocab context that produced them.
+LABEL_FORMAT = 6
 
 # Trajectory-coverage policy: READ with probability `DEFAULT_READ_PROB`,
 # otherwise the fixed write action. This is *not* the policy being learned; it
@@ -431,6 +439,26 @@ def _vocab_tokens(vocab) -> list | None:
     ]
 
 
+def _vocab_fingerprint(builder) -> str | None:
+    """Stable fingerprint of the word-id maps and the length ratio.
+
+    Labels are only reusable when the vocabulary that produced their text ids
+    and the ``rho`` that normalized their features are unchanged. Changing
+    ``--limit`` rebuilds the vocabulary/ratio from a different sentence set, so
+    a resumed run must refuse the old rows rather than silently mix encodings.
+    ``None`` means the builder has no vocabulary (the trainer's ad-hoc tests
+    only), so there is nothing to pin.
+    """
+    if builder is None:
+        return None
+    src = _vocab_tokens(getattr(builder, "src_vocab", None))
+    tgt = _vocab_tokens(getattr(builder, "tgt_vocab", None))
+    if src is None and tgt is None:
+        return None
+    payload = repr((src, tgt, float(getattr(builder, "rho", 1.0))))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _validate_supplied_builder(builder, payload, source: str) -> None:
     """Require a caller-supplied builder to match the checkpoint's frozen state.
 
@@ -450,7 +478,16 @@ def _validate_supplied_builder(builder, payload, source: str) -> None:
     for label in ("src_vocab", "tgt_vocab"):
         vocab = getattr(builder, label, None)
         tokens = _vocab_tokens(vocab)
-        if tokens is not None and tokens != expected:
+        if tokens is None:
+            # A builder with no vocabulary silently maps every text id to
+            # UNK/PAD. If the checkpoint stores a real vocabulary, that is a
+            # different word-id map even when `length_ratio` happens to match.
+            raise ValueError(
+                f"{source} has no {label} but the checkpoint stores a "
+                "vocabulary; refusing to feed UNK/PAD ids into a network "
+                "trained on real word ids"
+            )
+        if tokens != expected:
             raise ValueError(
                 f"{source} {label} vocabulary does not match the checkpoint's "
                 "stored vocabulary; refusing to reuse a different word-id map"
@@ -464,6 +501,53 @@ def _validate_supplied_builder(builder, payload, source: str) -> None:
                 f"checkpoint's stored ratio {float(stored_ratio)!r}; refusing "
                 "to apply a different normalization"
             )
+
+
+def _validate_label_resume_context(
+    rows: Sequence[dict],
+    labels_path: Path,
+    *,
+    predictor_id: int,
+    translator_id: int,
+    read_prob: float,
+    builder: FeatureBuilder,
+) -> None:
+    """Refuse resuming labels labelled under a different frozen context.
+
+    A resumed dev run must encode the same states and price the same behavior
+    policy. Changing the adapter pair, ``read_prob``, the vocabulary built from
+    a different ``--limit``, or ``rho`` would silently mix label contexts, so a
+    row that carries a stamp disagreeing with this run stops the run. Rows
+    without a stamp are pre-stamp diagnostics and are left to the format check.
+    """
+    expected = {
+        "predictor_id": int(predictor_id),
+        "translator_id": int(translator_id),
+        "read_prob": float(read_prob),
+        "rho": float(builder.rho),
+        "vocab_fingerprint": _vocab_fingerprint(builder),
+    }
+    for row in rows:
+        sentence_id = str(row.get("sentence_id", "<unknown>"))
+        for key, wanted in expected.items():
+            if key not in row:
+                continue
+            actual = row[key]
+            if key in ("read_prob", "rho"):
+                same = (
+                    actual is not None
+                    and abs(float(actual) - float(wanted)) <= 1e-9
+                )
+            elif key == "vocab_fingerprint":
+                same = actual == wanted
+            else:
+                same = actual is not None and int(actual) == int(wanted)
+            if not same:
+                raise ValueError(
+                    f"{labels_path} row {sentence_id!r} was labelled with "
+                    f"{key}={actual!r} but this run uses {wanted!r}. Move the "
+                    "file aside so one run never mixes label contexts."
+                )
 
 
 def _validate_calibration_targets(calibration_targets) -> str:
@@ -841,12 +925,20 @@ def _reuse_cost_records(
     return records, summary
 
 
-def _serialize_outcome(outcome: ActionOutcome, reward: float) -> dict:
+def _serialize_outcome(
+    outcome: ActionOutcome,
+    reward: float,
+    *,
+    terminal_value: float | None = None,
+) -> dict:
     """One outcome with candidate text omitted to keep the labels file small.
 
     `next_committed` and `emitted` are the successor inputs: training rebuilds
     each action's own successor from them, so READ and every write reach a
-    different state. Full candidate strings are deliberately not persisted.
+    different state. `terminal_value` is persisted per outcome only at a
+    terminal state; it is the length-gap proxy for this action's own committed
+    prefix, not the behavior action's. Full candidate strings are deliberately
+    not persisted.
     """
     return {
         "action": outcome.action.label,
@@ -868,6 +960,9 @@ def _serialize_outcome(outcome: ActionOutcome, reward: float) -> dict:
         "vote_margin": float(outcome.vote_margin),
         "vote_entropy": float(outcome.vote_entropy),
         "reward": float(reward),
+        "terminal_value": (
+            None if terminal_value is None else float(terminal_value)
+        ),
     }
 
 
@@ -935,8 +1030,20 @@ def _nonempty_file(path: Path) -> bool:
 
 
 def _deadline_artifact_path(path: Path) -> Path:
-    """Suffixed sibling used when a deadline stop must not clobber results."""
-    return path.with_name(f"{path.stem}.deadline{path.suffix}")
+    """First non-empty suffixed sibling for a deadline stop.
+
+    A repeated deadline return must not overwrite an earlier deadline summary
+    either: the first attempt uses ``summary.deadline.json``, a second one uses
+    ``summary.deadline2.json``, and so on. Only empty candidates are reused.
+    """
+    candidate = path.with_name(f"{path.stem}.deadline{path.suffix}")
+    counter = 2
+    while _nonempty_file(candidate):
+        candidate = path.with_name(
+            f"{path.stem}.deadline{counter}{path.suffix}"
+        )
+        counter += 1
+    return candidate
 
 
 def _deadline_artifact_paths(output_dir: Path) -> dict:
@@ -1091,6 +1198,36 @@ def _step_seconds(outcome: ActionOutcome) -> float:
     return float(outcome.pred_s) + float(outcome.mt_s)
 
 
+# Cost-model identities that have already emitted the plain-model warning.
+_WARNED_PLAIN_LABEL_COST: set[int] = set()
+
+
+def _warn_plain_label_cost(cost_model) -> None:
+    """Warn once per plain cost model whose labels fall back to serial time.
+
+    `rollout` and `CAVCTrainer` already warn when a model without
+    ``marginal_wall`` forces them onto the serial diagnostic. Labeling must do
+    the same instead of silently billing a different clock. No cost model at
+    all is the documented serial fallback and stays quiet.
+    """
+    if cost_model is None:
+        return
+    if callable(getattr(cost_model, "marginal_wall", None)):
+        return
+    key = id(cost_model)
+    if key in _WARNED_PLAIN_LABEL_COST:
+        return
+    _WARNED_PLAIN_LABEL_COST.add(key)
+    warnings.warn(
+        "label_sentence was given a plain cost model without "
+        "`marginal_wall`; the training clock falls back to the serial "
+        "pred_s + mt_s diagnostic instead of pipeline wall time. Wrap the "
+        "model in PipelineCostModel to match rollout.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
 def _estimate_action_marginal(
     cost_model,
     action: Action,
@@ -1188,6 +1325,8 @@ def _terminal_value_proxy(
     committed: Sequence[str],
     reference: str,
     reward_cfg: RewardConfig,
+    *,
+    oracle: Sequence[str] | None = None,
 ) -> float:
     """Length-gap proxy for a terminal state, including the forced prefix.
 
@@ -1196,9 +1335,17 @@ def _terminal_value_proxy(
     therefore ``committed + continuation``; using the continuation alone would
     make a longer correct prefix look worse. This remains a local word-count
     proxy, never BLEU or COMET.
+
+    `oracle` lets a caller pass an already-computed continuation for this exact
+    prefix (the labeler also caches it), so a READ outcome reuses the oracle
+    from `label_state` instead of paying for a second full-source translation.
     """
     committed_tuple = tuple(committed)
-    continuation = labeler.oracle_words(source, committed_tuple)
+    continuation = (
+        tuple(oracle)
+        if oracle is not None
+        else labeler.oracle_words(source, committed_tuple)
+    )
     hypothesis = " ".join((*committed_tuple, *continuation))
     return float(terminal_reward(hypothesis, reference, reward_cfg))
 
@@ -1256,9 +1403,13 @@ def label_sentence(
 
     A terminal state's `terminal_value` is a documented proxy: the negative
     absolute word-count difference between ``committed + oracle continuation``
-    and the reference. Including the forced prefix is essential; the
-    continuation alone would make a more complete sentence look worse. It is
-    not BLEU or COMET. Proxies such as this are deliberately local to training.
+    and the reference. It is evaluated **per outcome** on that action's own
+    committed prefix (READ, each write), because each action reaches a
+    different successor; a shared behavior-action value would price READ and
+    every write on the same final sentence. Including the forced prefix is
+    essential; the continuation alone would make a more complete sentence look
+    worse. It is not BLEU or COMET. Proxies such as this are deliberately local
+    to training.
     """
     cfg = cfg or ControllerConfig()
     stride = int(stride)
@@ -1293,6 +1444,7 @@ def label_sentence(
     rho = float(builder.rho)
     reward_cfg = _reward_config(cfg)
     arrival_gap = float(cfg.arrival_gap)
+    _warn_plain_label_cost(cost_model)
 
     # The coverage policy may only execute an action that is actually labelled.
     writes = tuple(action for action in cfg.actions if not action.is_read)
@@ -1333,10 +1485,16 @@ def label_sentence(
         )
 
         seed = _step_seed(cfg, sentence_id, read_pos, split)
-        write_outcomes = labeler.label_state(
-            observed, committed, source, label_actions, seed
+        labelled_outcomes = list(
+            labeler.label_state(
+                observed, committed, source, label_actions, seed
+            )
         )
-        read = labeler.read_outcome(committed)
+        # `cfg.actions` may already contain READ. `label_state` then returns a
+        # READ outcome; adding `read_outcome` unconditionally would produce two
+        # READ rows at every state.
+        if not any(outcome.action.is_read for outcome in labelled_outcomes):
+            labelled_outcomes.insert(0, labeler.read_outcome(committed))
         release_s = max(
             clock_s, max(0.0, (int(read_pos) - 1) * arrival_gap)
         )
@@ -1345,7 +1503,7 @@ def label_sentence(
         # measurement for the clock; the outcome still carries the measured
         # pred_s/mt_s as diagnostics.
         priced_outcomes = []
-        for outcome in (read, *write_outcomes):
+        for outcome in labelled_outcomes:
             marginal = _estimate_action_marginal(
                 cost_model,
                 outcome.action,
@@ -1384,13 +1542,31 @@ def label_sentence(
             )
 
         terminal = index == last_index
+        # `label_state` already translated the oracle for this state's
+        # committed prefix; the cache makes this a lookup, not a second
+        # full-source MT request.
+        oracle = labeler.oracle_words(source, tuple(committed))
+        # Each action reaches its own committed prefix, so a shared terminal
+        # value would price READ and every write on the behavior action's
+        # successor. The READ prefix hits the oracle cache; each distinct write
+        # prefix needs its own forced-prefix continuation.
+        terminal_values: dict[Action, float] = {}
+        if terminal:
+            for outcome in all_outcomes:
+                terminal_values[outcome.action] = _terminal_value_proxy(
+                    labeler,
+                    source,
+                    tuple(outcome.next_committed),
+                    reference,
+                    reward_cfg,
+                )
         row = {
             "read_pos": int(read_pos),
             "observed": observed,
             "successor_observed": successor_observed,
             "committed_before": list(committed),
             "committed_after": list(behavior_outcome.next_committed),
-            "oracle_words": int(len(labeler.oracle_words(source, committed))),
+            "oracle_words": int(len(oracle)),
             "chosen": behavior_action.label,
             "chosen_reward": float(rewards[behavior_action]),
             "history": asdict(tracker.history),
@@ -1398,23 +1574,21 @@ def label_sentence(
             "last_commit_s": float(tracker.last_commit_s),
             "now_s": clock_s,
             "terminal": bool(terminal),
-            "terminal_value": None,
+            # Row-level value for the behavior successor is kept for readers of
+            # older summaries; the per-outcome value below is what training
+            # consumes.
+            "terminal_value": (
+                float(terminal_values[behavior_action]) if terminal else None
+            ),
             "outcomes": [
-                _serialize_outcome(outcome, rewards[outcome.action])
+                _serialize_outcome(
+                    outcome,
+                    rewards[outcome.action],
+                    terminal_value=terminal_values.get(outcome.action),
+                )
                 for outcome in all_outcomes
             ],
         }
-
-        if terminal:
-            # EOS-flush proxy; `_terminal_value_proxy` appends the forced
-            # committed prefix that `oracle_words` omits.
-            row["terminal_value"] = _terminal_value_proxy(
-                labeler,
-                source,
-                tuple(behavior_outcome.next_committed),
-                reference,
-                reward_cfg,
-            )
 
         states.append(row)
         # Same clock recurrence as the rollout: settle the source arrival, then
@@ -1447,6 +1621,14 @@ def label_sentence(
         "stride": 1,
         "label_format": LABEL_FORMAT,
         "candidate_mode": getattr(labeler, "candidate_mode", "per_candidate"),
+        # Resume context: labels are only reusable under the same adapter pair,
+        # behavior policy, vocabulary/rho and candidate mode. `run_dev` refuses
+        # a resumed file whose stamps disagree with the new run.
+        "predictor_id": int(predictor_id),
+        "translator_id": int(translator_id),
+        "read_prob": float(read_prob),
+        "rho": float(rho),
+        "vocab_fingerprint": _vocab_fingerprint(builder),
         "behavior": {
             "read_prob": float(read_prob),
             "fixed_action": behavior_write.label,
@@ -1459,7 +1641,17 @@ def label_sentence(
 # Shared training pipeline
 # ----------------------------------------------------------------------
 def _components(cfg: ControllerConfig, sentences: Sequence):
-    """Build the on-screen vocab, feature builder, and untrained network."""
+    """Build the on-screen vocab, feature builder, and untrained network.
+
+    Initialisation is seeded here, before the network is constructed. Seeding
+    only inside `CAVCTrainer.fit` is too late: the weights have already been
+    drawn, so the same labels and `cfg.seed` would produce different weights on
+    every run and the saved seed could not reproduce the checkpoint.
+    """
+    import torch
+
+    torch.manual_seed(int(cfg.seed))
+    random.seed(int(cfg.seed))
     texts: list[str] = []
     pairs: list[tuple[str, str]] = []
     for sentence in sentences:
@@ -1547,15 +1739,33 @@ def _targets_from_rows(
             terminal = bool(state_row.get("terminal", False))
 
             if terminal:
+                records = state_row.get("outcomes") or []
+                # LABEL_FORMAT 6 stores one terminal value per outcome, each
+                # evaluated on that action's own committed prefix. Older rows
+                # (same format but no per-outcome value) fall back to the
+                # row-level behavior value.
+                per_outcome = [
+                    record.get("terminal_value") for record in records
+                ]
+                if (
+                    len(per_outcome) == len(outcomes)
+                    and all(value is not None for value in per_outcome)
+                ):
+                    terminal_values = [float(value) for value in per_outcome]
+                    terminal_value = None
+                else:
+                    terminal_values = None
+                    terminal_value = float(
+                        state_row.get("terminal_value") or 0.0
+                    )
                 targets.extend(
                     build_action_targets(
                         state,
                         outcomes,
                         cfg,
                         terminal=True,
-                        terminal_value=float(
-                            state_row.get("terminal_value") or 0.0
-                        ),
+                        terminal_value=terminal_value,
+                        terminal_values=terminal_values,
                         src_words_after=src_words_after,
                         state_key=key,
                         rho=builder.rho,
@@ -2557,6 +2767,14 @@ def run_dev(
             f"{labeler.candidate_mode!r}. Move the file aside so one run never "
             "mixes per-candidate and batched label distributions."
         )
+    _validate_label_resume_context(
+        existing_rows,
+        labels_path,
+        predictor_id=pid,
+        translator_id=tid,
+        read_prob=read_prob,
+        builder=builder,
+    )
     done = {str(row.get("sentence_id", "")) for row in existing_rows}
 
     # Calibrate/reuse the cost model before labeling: the labelling walk uses
@@ -2859,6 +3077,23 @@ def run_confirm(
             if payload is not None
             else ControllerConfig(seed=int(seed))
         )
+    elif payload is not None:
+        # A checkpoint's action grid and advantage baseline are frozen with its
+        # weights. A caller-supplied config must not silently change which
+        # actions are scored while the stored network stays fixed.
+        stored_cfg = _config_from_payload(payload, checkpoint_path)
+        if tuple(cfg.actions) != tuple(stored_cfg.actions):
+            raise ValueError(
+                f"caller-supplied cfg action grid {cfg.actions!r} does not "
+                f"match the checkpoint's frozen grid {stored_cfg.actions!r}; "
+                "refusing to evaluate a different action set"
+            )
+        if cfg.advantage_baseline != stored_cfg.advantage_baseline:
+            raise ValueError(
+                "caller-supplied cfg advantage_baseline "
+                f"{cfg.advantage_baseline!r} does not match the checkpoint's "
+                f"frozen baseline {stored_cfg.advantage_baseline!r}"
+            )
 
     predictor_devices = (None, None)
     if predictor is None or translator is None:

@@ -907,6 +907,9 @@ class StubLabeler:
         }
         outcomes = []
         for action in actions:
+            if action.is_read:
+                outcomes.append(self.read_outcome(committed))
+                continue
             matched, words = specs[action]
             outcomes.append(
                 ActionOutcome(
@@ -2374,3 +2377,212 @@ def test_per_candidate_downgrade_emits_a_warning():
             NoSamplePredictor(), object(), cfg, candidate_mode="per_candidate"
         )
     assert labeler.candidate_mode == "batched"
+
+
+# ----------------------------------------------------------------------
+# Fix wave: seeded init, oracle reuse, per-action terminal values, resume
+# stamps, and cheap hardening
+# ----------------------------------------------------------------------
+def test_components_seeds_network_initialisation():
+    harness = make_harness()
+    torch.manual_seed(1)
+    _builder_a, network_a, _vocab_a = kaggle._components(
+        harness["cfg"], harness["sentences"]
+    )
+    torch.manual_seed(987654)
+    _builder_b, network_b, _vocab_b = kaggle._components(
+        harness["cfg"], harness["sentences"]
+    )
+
+    for (name_a, parameter_a), (name_b, parameter_b) in zip(
+        network_a.named_parameters(), network_b.named_parameters()
+    ):
+        assert name_a == name_b
+        assert torch.equal(parameter_a, parameter_b), name_a
+
+
+def test_label_sentence_translates_the_oracle_once_per_nonterminal_state():
+    harness = make_harness()
+    cfg = ControllerConfig(seed=7, actions=(Action(2, 4),))
+    sentence = harness["sentences"][0]
+    oracle_calls: list[str] = []
+
+    class MajorityPredictor:
+        """Every candidate is identical, so RALCP commits both words."""
+
+        def sample(self, observed, branches, horizon, seed):
+            del observed, horizon, seed
+            return ["der hund"] * max(1, int(branches))
+
+    class CountingTranslator(FakeTranslator):
+        def translate_batch(self, sources, prefix, final=False, **kwargs):
+            if list(sources) == [sentence.source]:
+                oracle_calls.append(prefix)
+            return super().translate_batch(
+                sources, prefix, final=final, **kwargs
+            )
+
+    labeler = CounterfactualLabeler(
+        MajorityPredictor(), CountingTranslator(), cfg, timer=harness["timer"]
+    )
+    # Stop before the true last position so every labelled state is
+    # non-terminal: terminal values additionally ask for one forced-prefix
+    # oracle per distinct write prefix (see the terminal-value test).
+    row = kaggle.label_sentence(
+        labeler,
+        sentence,
+        stride=1,
+        cfg=cfg,
+        builder=harness["builder"],
+        read_prob=0.0,
+        max_states=2,
+    )
+
+    assert len(row["states"]) == 2
+    assert not any(state["terminal"] for state in row["states"])
+    # The committed prefix grows every state, so each state needs a distinct
+    # oracle -- exactly one full-source translation per labelled state. Before
+    # the fix, `label_sentence` re-requested it to count words, doubling this.
+    assert row["states"][0]["committed_after"]
+    assert len(oracle_calls) == len(row["states"])
+    assert len(set(oracle_calls)) == len(oracle_calls)
+    assert oracle_calls[0] == ""
+
+
+def test_label_sentence_dedupes_read_in_the_action_grid():
+    harness = make_harness()
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(READ, Action(2, 4), Action(4, 6)),
+    )
+    sentence = harness["sentences"][0]
+    row = kaggle.label_sentence(
+        StubLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
+
+    for state in row["states"]:
+        labels = [outcome["action"] for outcome in state["outcomes"]]
+        assert labels.count(READ.label) == 1
+        assert set(labels) == {READ.label, "b2h4", "b4h6"}
+
+
+def test_label_sentence_warns_once_for_a_plain_cost_model():
+    harness = make_harness()
+    cfg = ControllerConfig(seed=7, actions=(Action(2, 4),))
+    sentence = harness["sentences"][0]
+    cost_model = RecordingCostModel()
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        for _ in range(2):
+            kaggle.label_sentence(
+                StubLabeler(),
+                sentence,
+                stride=1,
+                cfg=cfg,
+                read_prob=0.0,
+                cost_model=cost_model,
+                max_states=1,
+            )
+    plain = [
+        warning
+        for warning in caught
+        if issubclass(warning.category, RuntimeWarning)
+        and "plain cost model" in str(warning.message)
+    ]
+    assert len(plain) == 1
+
+
+def test_run_dev_refuses_resume_labels_from_a_different_context(tmp_path):
+    harness = make_harness()
+    _run_dev(harness, tmp_path)
+    labels_path = tmp_path / "labels.jsonl"
+    rows = [
+        json.loads(line)
+        for line in labels_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows
+    # Every new-format row stamps the generation context.
+    assert "predictor_id" in rows[0]
+    assert "read_prob" in rows[0]
+    assert "vocab_fingerprint" in rows[0]
+
+    rows[0]["predictor_id"] = 1
+    labels_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="predictor_id"):
+        _run_dev(harness, tmp_path)
+
+    rows[0]["predictor_id"] = 0
+    rows[0]["vocab_fingerprint"] = "not-the-fingerprint"
+    labels_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="vocab_fingerprint"):
+        _run_dev(harness, tmp_path)
+
+
+def test_confirm_refuses_a_supplied_builder_without_a_vocabulary(tmp_path):
+    harness = make_harness()
+    checkpoint = tmp_path / "trained.pt"
+    _write_checkpoint(checkpoint, harness, {"trained": True})
+
+    with pytest.raises(ValueError, match="vocabulary"):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / "confirm"),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=checkpoint,
+            # No src_vocab/tgt_vocab: every text id would become UNK/PAD even
+            # though `length_ratio` matches the checkpoint.
+            builder=FeatureBuilder(length_ratio=1.0),
+            timer=harness["timer"],
+        )
+
+
+def test_confirm_refuses_a_caller_cfg_with_a_changed_action_grid(tmp_path):
+    harness = make_harness()
+    checkpoint = tmp_path / "trained.pt"
+    _write_checkpoint(checkpoint, harness, {"trained": True})
+    changed = ControllerConfig(seed=harness["cfg"].seed, actions=(Action(2, 4),))
+
+    with pytest.raises(ValueError, match="action grid"):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / "confirm"),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=checkpoint,
+            cfg=changed,
+            timer=harness["timer"],
+        )
+
+
+def test_repeated_deadline_return_preserves_an_existing_deadline_sibling(
+    tmp_path,
+):
+    prior_summary = '{"prior": "summary"}\n'
+    prior_deadline = '{"prior": "deadline"}\n'
+    (tmp_path / "summary.json").write_text(prior_summary, encoding="utf-8")
+    (tmp_path / "summary.deadline.json").write_text(
+        prior_deadline, encoding="utf-8"
+    )
+
+    harness = make_harness()
+    summary = _run_dev(harness, tmp_path, max_hours=0.0)
+
+    assert (tmp_path / "summary.json").read_text(encoding="utf-8") == prior_summary
+    assert (
+        tmp_path / "summary.deadline.json"
+    ).read_text(encoding="utf-8") == prior_deadline
+    assert (tmp_path / "summary.deadline2.json").is_file()
+    assert summary["deadline_artifacts"]["summary"].endswith(
+        "summary.deadline2.json"
+    )

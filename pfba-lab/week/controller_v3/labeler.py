@@ -164,6 +164,11 @@ class CounterfactualLabeler:
         self.runtime = ControlledRuntime(
             predictor, translator, self.cfg, timer=self.timer
         )
+        # Oracle translations are a full-source MT request. `label_state` and
+        # the terminal-value proxy for READ ask for the same
+        # ``(source, committed)`` pair, so cache the result instead of paying
+        # for it twice.
+        self._oracle_cache: dict[tuple[str, tuple[str, ...]], tuple[str, ...]] = {}
 
     # ------------------------------------------------------------------
     # Candidate sampling
@@ -312,12 +317,19 @@ class CounterfactualLabeler:
         oracle on a distinct stage makes that separation explicit in
         `timer.seconds` as well.
         """
-        prefix = " ".join(tuple(committed))
+        committed_tuple = tuple(committed)
+        cache_key = (str(source), committed_tuple)
+        cached = self._oracle_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        prefix = " ".join(committed_tuple)
         outputs, _seconds = self.runtime._timed(
             "oracle", lambda: self._translate_raw([source], prefix)
         )
         text = outputs[0] if outputs else ""
-        return tuple(text.split())
+        words = tuple(text.split())
+        self._oracle_cache[cache_key] = words
+        return words
 
     # ------------------------------------------------------------------
     # Labeling

@@ -483,9 +483,15 @@ Data is WMT German-to-English: **dev = newstest2013** (3,003 sentences) and
 
 Total: roughly **7-11 h** of a ~23-30 h weekly quota, leaving buffer for reruns.
 A single Kaggle session is capped near 12 h, so split the dev run and resume
-from `labels.jsonl` (one flushed row per sentence, skipped by `sentence_id`)
-plus the last `checkpoint.pt`. No separate resume command is needed: rerun the
-same `--mode dev` command and it continues from those artifacts.
+from `labels.jsonl` (one flushed row per sentence, skipped by `sentence_id`).
+No separate resume command is needed: rerun the same `--mode dev` command and
+it labels the remaining sentences. Training is **not** resumed from the saved
+weights or optimizer: when time remains it retrains the network on all
+accumulated labels with the frozen `cfg.seed`, and `checkpoint.pt` is a
+generated artifact (kept from the last run only when this run skips training).
+Resuming therefore requires the same adapter pair, `read_prob`, `--limit`
+(vocabulary/`rho`), and candidate mode; a labels row stamped with another
+context is refused rather than mixed.
 
 Split policy:
 

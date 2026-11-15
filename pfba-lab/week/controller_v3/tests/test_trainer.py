@@ -489,3 +489,177 @@ def test_fit_reports_zero_target_wall_time_when_no_epoch_runs():
     assert result["epochs"] == 0
     assert result["target_calls"] == 0
     assert result["target_seconds"] == 0.0
+
+
+# ----------------------------------------------------------------------
+# Fix wave: pairwise ranking must survive multi-batch training
+# ----------------------------------------------------------------------
+RANK_ACTIONS = (
+    Action(2, 4),
+    Action(2, 6),
+    Action(2, 10),
+    Action(4, 6),
+    Action(4, 8),
+    Action(4, 10),
+    Action(6, 6),
+    Action(6, 8),
+    Action(6, 10),
+)
+
+
+def _rank_targets(state_count: int) -> list[ActionTarget]:
+    """`state_count` states x (READ + nine writes), all terminal.
+
+    Terminal rows carry no bootstrap, so `compute_targets` returns the
+    immediate values exactly; write targets within a state differ by more than
+    `rank_epsilon`.
+    """
+    targets: list[ActionTarget] = []
+    for state_index in range(state_count):
+        state = make_state(state_index)
+        targets.append(
+            ActionTarget(
+                state=state,
+                action=READ,
+                value_target=-100.0,
+                error_target=0.0,
+                no_emit_target=0.0,
+                emit_target=0.0,
+                state_key=f"rank-{state_index}",
+                terminal=True,
+            )
+        )
+        for action_index, action in enumerate(RANK_ACTIONS):
+            targets.append(
+                ActionTarget(
+                    state=state,
+                    action=action,
+                    value_target=float(action_index) * 0.5,
+                    error_target=0.0,
+                    no_emit_target=0.0,
+                    emit_target=0.0,
+                    state_key=f"rank-{state_index}",
+                    terminal=True,
+                )
+            )
+    return targets
+
+
+def test_ranking_pairs_survive_multibatch_fit(monkeypatch):
+    import controller_v3.trainer as trainer_module
+
+    state_count = 300
+    targets = _rank_targets(state_count)
+    pairs_per_state = len(RANK_ACTIONS) * (len(RANK_ACTIONS) - 1) // 2
+    possible_pairs = state_count * pairs_per_state
+
+    observed_pairs = 0
+    original = trainer_module.pairwise_ranking_loss
+
+    def counting_rank_loss(
+        predictions,
+        ranking_targets,
+        state_keys,
+        epsilon,
+        max_pairs=trainer_module.MAX_RANK_PAIRS_PER_STATE,
+        write_mask=None,
+    ):
+        nonlocal observed_pairs
+        counts: dict[str, int] = {}
+        for index, key in enumerate(state_keys):
+            if not key:
+                continue
+            if write_mask is not None and not bool(write_mask[index]):
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        observed_pairs += sum(count * (count - 1) // 2 for count in counts.values())
+        return original(
+            predictions,
+            ranking_targets,
+            state_keys,
+            epsilon,
+            max_pairs=max_pairs,
+            write_mask=write_mask,
+        )
+
+    monkeypatch.setattr(
+        trainer_module, "pairwise_ranking_loss", counting_rank_loss
+    )
+    trainer, _, _ = make_trainer(dropout=0.0)
+    trainer.train_config = TrainConfig(epochs=1, batch_size=16, lr=0.01)
+
+    result = trainer.fit(targets)
+
+    # Old code (shuffle rows, slice consecutive batches) sees ~2-3% of the
+    # same-state write pairs at batch 16. Whole-group batching must see them
+    # all.
+    assert observed_pairs >= 0.9 * possible_pairs
+    assert observed_pairs == possible_pairs
+    assert result["rank_loss"] > 0.0
+
+
+def test_state_group_is_never_split_across_batches(monkeypatch):
+    trainer, _, _ = make_trainer(dropout=0.0)
+    trainer.train_config = TrainConfig(epochs=1, batch_size=7, lr=0.01)
+
+    targets: list[ActionTarget] = []
+    rows_per_state = 5
+    for state_index in range(12):
+        state = make_state(state_index)
+        for action_index in range(rows_per_state):
+            targets.append(
+                ActionTarget(
+                    state=state,
+                    action=READ if action_index == rows_per_state - 1 else ACTIONS[action_index % len(ACTIONS)],
+                    value_target=float(action_index),
+                    error_target=0.0,
+                    no_emit_target=0.0,
+                    emit_target=0.0,
+                    state_key=f"group-{state_index}",
+                    terminal=True,
+                )
+            )
+    # Empty keys remain their own one-row groups; they must never merge.
+    targets.append(
+        ActionTarget(
+            state=make_state(99),
+            action=ACTIONS[0],
+            value_target=0.0,
+            error_target=0.0,
+            no_emit_target=0.0,
+            emit_target=0.0,
+            state_key="",
+            terminal=True,
+        )
+    )
+
+    recorded: list[list[str]] = []
+    original = trainer._batch_loss
+
+    def recording_batch_loss(batch, target_values):
+        recorded.append([target.state_key for target in batch])
+        return original(batch, target_values)
+
+    monkeypatch.setattr(trainer, "_batch_loss", recording_batch_loss)
+
+    trainer.fit(targets)
+
+    destinations: dict[str, list[int]] = {}
+    for batch_index, keys in enumerate(recorded):
+        for key in keys:
+            if not key:
+                continue
+            destinations.setdefault(key, []).append(batch_index)
+    assert len(destinations) == 12
+    for key, batch_indices in destinations.items():
+        assert len(set(batch_indices)) == 1, key
+        assert batch_indices.count(batch_indices[0]) == rows_per_state
+
+    empty_batches = [
+        batch_index
+        for batch_index, keys in enumerate(recorded)
+        if "" in keys
+    ]
+    assert empty_batches
+    for batch_index in empty_batches:
+        assert recorded[batch_index].count("") == 1

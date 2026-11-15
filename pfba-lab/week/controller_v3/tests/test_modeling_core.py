@@ -128,6 +128,51 @@ class PrefixOracleLabeler:
         return ()
 
 
+class PrefixTerminalLabeler(PrefixOracleLabeler):
+    """Two writes with different correct prefixes and prefix-dependent oracles."""
+
+    def read_outcome(self, committed):
+        return ActionOutcome(
+            action=READ,
+            new_words=(),
+            matched=0,
+            incorrect=0,
+            emitted=0,
+            no_emit=True,
+            next_committed=tuple(committed),
+            pred_s=0.0,
+            mt_s=0.0,
+            vote_top1=0.0,
+            vote_margin=0.0,
+            vote_entropy=0.0,
+        )
+
+    def oracle_words(self, source, committed):
+        del source
+        committed = tuple(committed)
+        return {
+            (): ("a", "b", "c"),
+            # The shorter correct prefix continues with an extra word, so its
+            # terminal length gap is worse even though the prefix is right.
+            ("a",): ("b", "c", "d"),
+            ("a", "b"): ("c",),
+        }.get(committed, ())
+
+    def label_state(self, observed, committed, source, actions, seed):
+        del observed, source, seed
+        emissions = {
+            Action(2, 4): ("a",),
+            Action(4, 6): ("a", "b"),
+        }
+        outcomes = []
+        for action in actions:
+            if action.is_read:
+                outcomes.append(self.read_outcome(committed))
+            else:
+                outcomes.append(outcome(action, emissions[action], tuple(committed)))
+        return outcomes
+
+
 def make_cfg(**overrides) -> ControllerConfig:
     defaults = dict(seed=7, actions=WRITES)
     defaults.update(overrides)
@@ -480,6 +525,47 @@ def test_terminal_proxy_includes_the_forced_committed_prefix():
         labeler, "src", ("the", "cat"), "the cat sits down", reward_cfg
     )
     assert partial == -1.0
+
+
+def test_terminal_targets_are_conditioned_on_each_actions_prefix():
+    cfg = make_cfg(
+        min_start=3, actions=(Action(2, 4), Action(4, 6))
+    )
+    # One decision position (read_pos=3), so it is also the terminal state.
+    sentence = FakeSentence("s0", "a b c d", "a b c")
+    builder = FeatureBuilder()
+    row = kaggle.label_sentence(
+        PrefixTerminalLabeler(),
+        sentence,
+        stride=1,
+        cfg=cfg,
+        builder=builder,
+        read_prob=0.0,
+    )
+
+    assert len(row["states"]) == 1
+    state_row = row["states"][0]
+    assert state_row["terminal"] is True
+    serialized = {
+        outcome["action"]: outcome["terminal_value"]
+        for outcome in state_row["outcomes"]
+    }
+    # READ reuses the state oracle; each write uses its own committed prefix.
+    assert serialized[READ.label] == 0.0
+    assert serialized["b2h4"] == -1.0
+    assert serialized["b4h6"] == 0.0
+
+    targets, _states = kaggle._targets_from_rows(
+        [row], builder, cfg, predictor_id=0, translator_id=0
+    )
+    values = {target.action: target.value_target for target in targets}
+    assert values[READ] == 0.0
+    assert values[Action(2, 4)] == -1.0
+    assert values[Action(4, 6)] == 0.0
+    # Two actions with different correct prefixes get different terminal
+    # targets; the longer correct prefix does not lower the value.
+    assert values[Action(2, 4)] != values[Action(4, 6)]
+    assert values[Action(4, 6)] >= values[Action(2, 4)]
 
 
 def test_max_states_stops_labeling_early_without_false_terminal():
