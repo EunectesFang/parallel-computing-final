@@ -38,6 +38,7 @@ from __future__ import annotations
 import inspect
 import math
 import warnings
+import weakref
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -160,6 +161,29 @@ def _score_state(network, vector, query_actions: Sequence[Action]):
     return z, read_q, q_by_action, no_emit_by_action
 
 
+# Plain cost models warned about at most once each. `WeakSet` keeps this from
+# retaining caller objects; an unhashable/non-weakref-able model is warned per
+# call because identity cannot be tracked safely.
+_WARNED_PLAIN_COST: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def _warn_plain_cost_once(cost_model) -> None:
+    try:
+        if cost_model in _WARNED_PLAIN_COST:
+            return
+        _WARNED_PLAIN_COST.add(cost_model)
+    except TypeError:
+        pass
+    warnings.warn(
+        "rollout pricing used a plain cost model without `marginal_wall`; "
+        "falling back to the serial pred_s + mt_s diagnostic instead of "
+        "pipeline wall time. Wrap the model in PipelineCostModel for the "
+        "schedule-aware price.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
+
+
 def _action_cost(
     cost_model,
     vector,
@@ -196,14 +220,7 @@ def _action_cost(
                 tgt_words,
             )
         )
-    warnings.warn(
-        "rollout pricing used a plain cost model without `marginal_wall`; "
-        "falling back to the serial pred_s + mt_s diagnostic instead of "
-        "pipeline wall time. Wrap the model in PipelineCostModel for the "
-        "schedule-aware price.",
-        RuntimeWarning,
-        stacklevel=3,
-    )
+    _warn_plain_cost_once(cost_model)
     estimate = cost_model.predict(
         vector.predictor_id,
         vector.translator_id,

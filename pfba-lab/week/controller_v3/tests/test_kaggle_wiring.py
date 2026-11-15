@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1027,6 +1028,9 @@ def test_run_dev_stops_gracefully_when_deadline_has_passed(tmp_path):
     assert second["trained"] is False
     assert second["training"]["status"] == "skipped"
     assert second["rollout"]["n"] == 0
+    # No target was computed, so the logged target wall time is exactly zero.
+    assert second["target_wall_s"] == 0.0
+    assert second["training"]["target_seconds"] == 0.0
     # The trained checkpoint is kept rather than overwritten untrained.
     assert checkpoint.read_bytes() == before
     assert (tmp_path / "summary.json").is_file()
@@ -1320,6 +1324,13 @@ def test_run_dev_writes_feature_stats_paired_and_risk_calibration(tmp_path):
     assert summary["rollout_fixed"]["n"] == 1
     assert summary["n_train_targets"] < summary["n_targets"]
     assert summary["n_risk_calibration_targets"] > 0
+    # Bellman-target construction wall time is logged at the summary top level
+    # and in the nested training block.
+    assert summary["target_wall_s"] >= 0.0
+    assert summary["training"]["target_calls"] > 0
+    assert summary["target_wall_s"] == pytest.approx(
+        summary["training"]["target_seconds"]
+    )
     assert summary["risk_calibration"]["status"] == "ok"
     assert math.isfinite(summary["risk_calibration"]["error_risk"]["brier"])
     assert math.isfinite(summary["risk_calibration"]["no_emit"]["ece"])
@@ -1763,6 +1774,14 @@ def test_deadline_early_return_preserves_prior_artifacts_and_is_explicit(tmp_pat
         assert summary[key] is None
     assert summary["not_run"]["reason"]
     assert "risk_calibration" in summary["not_run"]["sections"]
+    # The pointer must be inside the serialized file, not only the return value.
+    written = json.loads(
+        (tmp_path / "summary.deadline.json").read_text(encoding="utf-8")
+    )
+    assert written["deadline_artifacts"] == summary["deadline_artifacts"]
+    assert written["deadline_artifacts"]["summary"].endswith(
+        "summary.deadline.json"
+    )
 
 
 def test_dev_calibration_values_match_independent_holdout(tmp_path):
@@ -1842,10 +1861,98 @@ def test_confirm_risk_calibration_is_dev_derived_and_never_test(tmp_path):
         for note in summary["notes"]
     )
 
+    refused_dir = tmp_path / "refused"
     with pytest.raises(ValueError, match="test slice|dev holdout"):
         kaggle.run_confirm(
-            calibration_targets=[_target("test:0140:3")], **kwargs
+            calibration_targets=[_target("test:0140:3")],
+            **{**kwargs, "output_dir": str(refused_dir)},
         )
+    # The refusal happens before rollouts, so no evaluation artifact exists.
+    assert not (refused_dir / "traces.jsonl").exists()
+    assert not (refused_dir / "summary.json").exists()
+
+
+def test_confirm_never_calibrates_a_network_it_cannot_prove_trained(tmp_path):
+    harness = make_harness()
+    builder, network = _frozen_builder_network(harness)
+    # No checkpoint: the supplied frozen builder+network has no training
+    # provenance, so calibration must stay unavailable even with targets.
+    summary = kaggle.run_confirm(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "supplied"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        cfg=harness["cfg"],
+        builder=builder,
+        network=network,
+        calibration_targets=[_target("dev:0000:3")],
+        timer=harness["timer"],
+    )
+    assert summary["risk_calibration"]["status"] == "unavailable"
+    assert "not a trained checkpoint" in summary["risk_calibration"]["reason"]
+    assert summary["risk_calibration_source"] == "none"
+
+    # An explicitly allowed untrained checkpoint is likewise uncalibratable.
+    checkpoint = tmp_path / "untrained.pt"
+    _write_checkpoint(checkpoint, harness, {"trained": False})
+    untrained = kaggle.run_confirm(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "untrained"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        checkpoint_path=checkpoint,
+        allow_untrained=True,
+        calibration_targets=[_target("dev:0000:3")],
+        timer=harness["timer"],
+    )
+    assert untrained["trained"] is False
+    assert untrained["risk_calibration"]["status"] == "unavailable"
+    assert untrained["risk_calibration_source"] == "none"
+
+
+def test_confirm_labels_calibration_provenance_from_target_keys(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    preflight_dir = tmp_path / "preflight"
+    kaggle.run_preflight(
+        limit=3,
+        output_dir=str(preflight_dir),
+        label_states=2,
+        rollout_sentences=1,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=harness["sentences"],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+
+    def confirm(name, key):
+        return kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / name),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=preflight_dir / "checkpoint.pt",
+            calibration_targets=[_target(key)],
+            timer=harness["timer"],
+        )
+
+    caller = confirm("caller", "s0:3")
+    assert caller["risk_calibration"]["status"] == "ok"
+    assert caller["risk_calibration_source"] == "caller_supplied"
+
+    dev = confirm("dev", "dev:0000:3")
+    assert dev["risk_calibration"]["status"] == "ok"
+    assert dev["risk_calibration_source"] == "dev_holdout"
 
 
 def test_confirm_refuses_cost_records_for_another_pair(tmp_path):
@@ -2129,6 +2236,24 @@ def test_committed_kernel_bundle_byte_matches_generator():
     assert ok, problems
 
 
+def test_prepare_kernel_check_detects_stale_bundle(tmp_path, capsys):
+    module = _load_prepare_module()
+    # A clean tree (the committed bundle) passes the check.
+    assert module.main(["--check", "--output-dir", str(module.STAGE_DIR)]) == 0
+    assert "bundle up to date" in capsys.readouterr().out
+
+    # Write a fresh copy, then mutate one generated file and confirm the
+    # check fails with a non-zero exit status.
+    module.write_kernel(output_dir=tmp_path)
+    ok, problems = module.verify_kernel(tmp_path)
+    assert ok, problems
+    (tmp_path / "kaggle_entry.py").write_text("stale", encoding="utf-8")
+    ok, problems = module.verify_kernel(tmp_path)
+    assert not ok
+    assert any("stale" in problem for problem in problems)
+    assert module.main(["--check", "--output-dir", str(tmp_path)]) == 1
+
+
 def test_risk_calibration_rejects_nonpositive_buckets():
     harness = make_harness()
     with pytest.raises(ValueError, match="buckets"):
@@ -2166,3 +2291,86 @@ def test_stage_timer_defaults_to_synchronized_run_pfba_timer():
         )
         is injected
     )
+
+
+def test_stage_timer_syncs_each_distinct_adapter_device():
+    class FakeStageTimer:
+        def __init__(self, sync):
+            self.sync = sync
+
+    class FakePfba:
+        StageTimer = FakeStageTimer
+
+        def __init__(self):
+            self.synced = []
+
+        def _sync(self, device):
+            self.synced.append(device)
+
+    class Adapter:
+        def __init__(self, device):
+            self.device = device
+
+    pfba = FakePfba()
+    timer = kaggle._stage_timer(
+        pfba, Adapter("cuda:0"), Adapter("cuda:1"), None
+    )
+    timer.sync()
+    assert pfba.synced == ["cuda:0", "cuda:1"]
+
+    same = FakePfba()
+    timer = kaggle._stage_timer(
+        same, Adapter("cuda:0"), Adapter("cuda:0"), None
+    )
+    timer.sync()
+    assert same.synced == ["cuda:0"]
+
+    # Adapters without `.device` degrade to a no-op sync; this is acceptable
+    # for CPU/test adapters and is documented on the helper.
+    no_device = FakePfba()
+    timer = kaggle._stage_timer(no_device, object(), object(), None)
+    timer.sync()
+    assert no_device.synced == []
+
+
+def test_plain_cost_model_warns_once_per_model():
+    harness = make_harness()
+    cfg = ControllerConfig(
+        seed=7, actions=(Action(2, 4),), min_start=3, advantage_baseline=None
+    )
+    cost_model = RecordingCostModel()
+    sentence = Sentence(
+        "s0", "hallo welt wir lernen heute .", "hello world we learn today ."
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        trace = run_rollout(
+            sentence,
+            None,
+            None,
+            RecordingNetwork(),
+            harness["builder"],
+            cost_model,
+            cfg,
+            runtime=FakeRuntime(),
+        )
+    assert any(step["action"] == "b2h4" for step in trace.steps)
+    plain = [
+        warning
+        for warning in caught
+        if issubclass(warning.category, RuntimeWarning)
+        and "plain cost model" in str(warning.message)
+    ]
+    assert len(plain) == 1
+
+
+def test_per_candidate_downgrade_emits_a_warning():
+    class NoSamplePredictor:
+        """Has no `sample` method, so per-candidate cannot run."""
+
+    cfg = ControllerConfig(seed=7)
+    with pytest.warns(RuntimeWarning, match="downgrading"):
+        labeler = CounterfactualLabeler(
+            NoSamplePredictor(), object(), cfg, candidate_mode="per_candidate"
+        )
+    assert labeler.candidate_mode == "batched"

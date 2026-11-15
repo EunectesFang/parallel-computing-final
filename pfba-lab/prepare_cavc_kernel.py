@@ -187,15 +187,15 @@ def write_kernel(
     stage = Path(output_dir)
     stage.mkdir(parents=True, exist_ok=True)
     sources = bundle_sources() if sources is None else dict(sources)
-    script = build_entry_script(sources, command)
+    # Build exactly the bytes `verify_kernel` compares against; the two paths
+    # must never diverge.
+    entry_text, metadata_text = expected_outputs(sources, command)
     entry_path = stage / "kaggle_entry.py"
     metadata_path = stage / "kernel-metadata.json"
     # Pin LF so the committed bytes are identical on every platform and the
     # `--check` hash comparison is meaningful.
-    entry_path.write_bytes(script.encode("utf-8"))
-    metadata_path.write_bytes(
-        (json.dumps(build_metadata(), indent=2) + "\n").encode("utf-8")
-    )
+    entry_path.write_bytes(entry_text.encode("utf-8"))
+    metadata_path.write_bytes(metadata_text.encode("utf-8"))
     return {
         "stage": stage,
         "entry": entry_path,

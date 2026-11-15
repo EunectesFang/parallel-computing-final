@@ -408,14 +408,19 @@ cd pfba-lab/week
   --output-dir outputs/cavc_confirm
 ```
 
-`preflight` and `dev` write `summary.json`, `traces.jsonl`, `config.json`,
-`cost_records.json`, and `checkpoint.pt` under `--output-dir`, plus the git
-commit recorded in `summary.json` and the checkpoint. `confirm` writes
-`summary.json`, `traces.jsonl`, and `config.json`; it never trains, so it
-writes no `cost_records.json` or `checkpoint.pt`. BLEU/COMET carry the
-status returned by `run_pfba`: without `sacrebleu` BLEU is
-`{"status": "unavailable"}` with no score, and COMET is `skipped` because
-loading it downloads model weights. No metric is ever invented.
+`preflight` and `dev` write `summary.json`, `traces.jsonl`, `config.json`, and
+`cost_records.json` under `--output-dir`, plus the git commit recorded in
+`summary.json`. They write `checkpoint.pt` **only when training actually ran**
+at least one optimisation epoch over at least one sample. A zero-epoch run or a
+deadline-stopped session that passes before training writes no checkpoint
+(`summary.json` reports `trained: false` and `checkpoint.status:
+"not_written"`), so a later confirm cannot mistake an untrained file for
+trained weights. `confirm` writes `summary.json`, `traces.jsonl`, and
+`config.json`; it never trains, so it writes no `cost_records.json` or
+`checkpoint.pt`. BLEU/COMET carry the status returned by `run_pfba`: without
+`sacrebleu` BLEU is `{"status": "unavailable"}` with no score, and COMET is
+`skipped` because loading it downloads model weights. No metric is ever
+invented.
 
 `confirm` refuses an offset below `test:0140` unless `--allow-consumed` is
 given. It also refuses a checkpoint whose `extra["trained"]` is false or

@@ -466,6 +466,29 @@ def _validate_supplied_builder(builder, payload, source: str) -> None:
             )
 
 
+def _validate_calibration_targets(calibration_targets) -> str:
+    """Refuse test-derived calibration targets and classify their provenance.
+
+    Confirmation may only calibrate on dev holdout rows. Returns
+    ``"dev_holdout"`` when every target key carries the dev split,
+    ``"caller_supplied"`` otherwise, and ``"none"`` for an empty list. The
+    call happens before any rollout so a bad target list cannot burn the full
+    evaluation only to fail at the end.
+    """
+    targets = list(calibration_targets or ())
+    if not targets:
+        return "none"
+    keys = [str(getattr(target, "state_key", "")) for target in targets]
+    for key in keys:
+        if "test:" in key or key.startswith("test"):
+            raise ValueError(
+                "run_confirm refuses calibration targets derived from the "
+                f"test slice (state_key {key!r}); calibrate on dev holdout "
+                "targets only"
+            )
+    return "dev_holdout" if keys and all(key.startswith("dev:") for key in keys) else "caller_supplied"
+
+
 def _validate_cost_records_pair(records, predictor_id: int, translator_id: int, source: str) -> None:
     """Raise when any cost record was measured for a different adapter pair."""
     expected = (int(predictor_id), int(translator_id))
@@ -797,18 +820,23 @@ def _reuse_cost_records(
         None if recorded_pid is None else int(recorded_pid),
         None if recorded_tid is None else int(recorded_tid),
     )
+    problems: list[str] = []
     if (
-        (recorded[0] is not None and recorded[0] != expected[0])
-        or (recorded[1] is not None and recorded[1] != expected[1])
-        or any(
-            (int(record[0]), int(record[1])) != expected for record in records
-        )
+        recorded[0] is not None
+        and recorded[1] is not None
+        and recorded != expected
     ):
+        problems.append(f"summary pair {recorded[0]}/{recorded[1]}")
+    for index, record in enumerate(records):
+        pair = (int(record[0]), int(record[1]))
+        if pair != expected:
+            problems.append(f"record {index} pair {pair[0]}/{pair[1]}")
+            break
+    if problems:
         raise ValueError(
-            f"{path} holds cost records for model pair "
-            f"{recorded[0]}/{recorded[1]} but the resolved pair is "
-            f"{expected[0]}/{expected[1]}; move the file aside so the table is "
-            "recalibrated for this adapter pair"
+            f"{path} does not match the resolved model pair "
+            f"{expected[0]}/{expected[1]}: " + ", ".join(problems) + "; move "
+            "the file aside so the table is recalibrated for this adapter pair"
         )
     return records, summary
 
@@ -911,16 +939,13 @@ def _deadline_artifact_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}.deadline{path.suffix}")
 
 
-def _write_deadline_artifacts(
-    output_dir: Path, summary: dict, traces: Sequence[RolloutTrace]
-) -> dict:
-    """Write an early deadline summary/traces without clobbering good files.
+def _deadline_artifact_paths(output_dir: Path) -> dict:
+    """Choose early-deadline summary/trace paths without clobbering results.
 
     A deadline-stopped session that produced no labels must not replace a
     non-empty `summary.json` or `traces.jsonl` from an earlier, productive
     session with an empty file. When the canonical file is non-empty the
     early return goes to `summary.deadline.json` / `traces.deadline.jsonl`.
-    Returns the paths actually written.
     """
     summary_path = output_dir / "summary.json"
     traces_path = output_dir / "traces.jsonl"
@@ -928,8 +953,6 @@ def _write_deadline_artifacts(
         summary_path = _deadline_artifact_path(summary_path)
     if _nonempty_file(traces_path):
         traces_path = _deadline_artifact_path(traces_path)
-    _write_json(summary_path, summary)
-    _write_traces(traces_path, traces)
     return {"summary": str(summary_path), "traces": str(traces_path)}
 
 
@@ -2682,8 +2705,12 @@ def run_dev(
                 },
                 "notes": ["No label row was written before the deadline."],
             }
-            written = _write_deadline_artifacts(output_dir, summary, [])
+            # Set the pointer before serialization so the written summary and
+            # the returned dict agree about where this early return landed.
+            written = _deadline_artifact_paths(output_dir)
             summary["deadline_artifacts"] = written
+            _write_json(Path(written["summary"]), summary)
+            _write_traces(Path(written["traces"]), [])
             return summary
         raise RuntimeError(
             "run_dev has no labeled rows yet; rerun with more time to label "
@@ -2964,6 +2991,11 @@ def run_confirm(
             records = getattr(table, "records", None)
         _validate_cost_records_pair(records, pid, tid, "supplied cost model")
 
+    # Validate calibration provenance before running any rollout: a
+    # test-derived target list must fail immediately, not after the full
+    # learned and fixed evaluations.
+    calibration_source = _validate_calibration_targets(calibration_targets)
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     post = PostController() if post_controller else None
@@ -3003,20 +3035,7 @@ def run_confirm(
     paired_payload = _paired_metrics(
         traces, fixed_traces, include_comet=include_comet
     )
-    if calibration_targets:
-        # Calibration is a dev-holdout measurement. A target reconstructed from
-        # the test slice would be calibrating on the frozen evaluation data,
-        # which this mode must never do.
-        for target in calibration_targets:
-            key = str(getattr(target, "state_key", ""))
-            if "test:" in key or key.startswith("test"):
-                raise ValueError(
-                    "run_confirm refuses calibration targets derived from the "
-                    f"test slice (state_key {key!r}); calibrate on dev holdout "
-                    "targets only"
-                )
-        risk_payload = risk_calibration(network, calibration_targets)
-    else:
+    if not calibration_targets:
         risk_payload = {
             "status": "unavailable",
             # State the provenance explicitly: confirmation never calibrates on
@@ -3030,6 +3049,20 @@ def run_confirm(
             "error_risk": {},
             "no_emit": {},
         }
+    elif not checkpoint_trained:
+        # A supplied frozen builder+network or an `allow_untrained=True`
+        # checkpoint has no provable training provenance. Never report `ok`
+        # calibration for weights this run cannot prove were trained.
+        risk_payload = {
+            "status": "unavailable",
+            "reason": "run_confirm's network is not a trained checkpoint; "
+            "refusing to calibrate weights with no training provenance",
+            "n": 0,
+            "error_risk": {},
+            "no_emit": {},
+        }
+    else:
+        risk_payload = risk_calibration(network, calibration_targets)
 
     config_path = output_dir / "config.json"
     traces_path = output_dir / "traces.jsonl"
@@ -3060,10 +3093,13 @@ def run_confirm(
         "seed": int(cfg.seed),
         "post_controller": "enabled" if post_controller else "disabled",
         "risk_calibration": risk_payload,
-        # Explicit provenance: any calibration reported here is dev-holdout
-        # derived; the test slice is never calibrated on.
+        # Explicit provenance: only a trained checkpoint with dev-keyed targets
+        # reports `dev_holdout`; other caller lists are `caller_supplied` and
+        # an unused list is `none`.
         "risk_calibration_source": (
-            "dev_holdout" if calibration_targets else "none"
+            calibration_source
+            if checkpoint_trained and calibration_targets
+            else "none"
         ),
         "vocab_source": vocab_source,
         "git_commit": (
