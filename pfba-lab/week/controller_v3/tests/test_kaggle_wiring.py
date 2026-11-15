@@ -586,6 +586,39 @@ def test_run_dev_excludes_holdout_and_resumes_by_sentence_id(tmp_path):
     assert resumed["newly_labeled"] == 0
 
 
+def test_run_dev_refuses_labels_written_by_an_older_format(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    output_dir = tmp_path / "dev"
+    output_dir.mkdir()
+    stale_row = {
+        "sentence_id": "s0",
+        "split": "dev",
+        "source": harness["sentences"][0].source,
+        "stride": 4,
+        # No `label_format`: this is the pre-fix multi-step schema.
+        "states": [{"read_pos": 3, "observed": "hallo", "outcomes": []}],
+    }
+    (output_dir / "labels.jsonl").write_text(
+        json.dumps(stale_row) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="label format|label_format"):
+        kaggle.run_dev(
+            limit=0,
+            output_dir=str(output_dir),
+            max_hours=1.0,
+            seed=cfg.seed,
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=harness["sentences"],
+            cfg=cfg,
+            predictor_id=0,
+            translator_id=0,
+            timer=harness["timer"],
+        )
+
+
 # ----------------------------------------------------------------------
 # Kernel packaging
 # ----------------------------------------------------------------------

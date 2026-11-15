@@ -77,6 +77,7 @@ from .features import (
     HistoryTracker,
     RuntimeInfo,
     StateInput,
+    advance_virtual_clock,
     estimate_length_ratio,
 )
 from .labeler import ActionOutcome, CounterfactualLabeler
@@ -118,8 +119,10 @@ DEFAULT_CONFIRM_LIMIT = 64
 
 # Bump whenever the `labels.jsonl` state/outcome schema changes. A resumable
 # dev run refuses a file written by an older schema instead of mixing a
-# multi-step successor with the current one-step successor.
-LABEL_FORMAT = 2
+# multi-step successor with the current one-step successor. Format 3 fixes the
+# terminal proxy: the hypothesis must include the forced committed prefix,
+# because `oracle_words` returns only its continuation.
+LABEL_FORMAT = 3
 
 # Trajectory-coverage policy: READ with probability `DEFAULT_READ_PROB`,
 # otherwise the fixed write action. This is *not* the policy being learned; it
@@ -867,6 +870,27 @@ def _advance_tracker(
     return successor
 
 
+def _terminal_value_proxy(
+    labeler: CounterfactualLabeler,
+    source: str,
+    committed: Sequence[str],
+    reference: str,
+    reward_cfg: RewardConfig,
+) -> float:
+    """Length-gap proxy for a terminal state, including the forced prefix.
+
+    `oracle_words` translates the full source with `committed` forced and
+    returns only the continuation after that prefix. The final hypothesis is
+    therefore ``committed + continuation``; using the continuation alone would
+    make a longer correct prefix look worse. This remains a local word-count
+    proxy, never BLEU or COMET.
+    """
+    committed_tuple = tuple(committed)
+    continuation = labeler.oracle_words(source, committed_tuple)
+    hypothesis = " ".join((*committed_tuple, *continuation))
+    return float(terminal_reward(hypothesis, reference, reward_cfg))
+
+
 def label_sentence(
     labeler: CounterfactualLabeler,
     sentence,
@@ -877,6 +901,7 @@ def label_sentence(
     predictor_id: int = 0,
     translator_id: int = 0,
     read_prob: float = DEFAULT_READ_PROB,
+    max_states: int | None = None,
 ) -> dict:
     """Label one sentence with true one-step transitions.
 
@@ -892,18 +917,29 @@ def label_sentence(
       rollout uses, so History features are live instead of all-zero.
     * `labeler.label_state` labels every write in `cfg.actions`; `read_outcome`
       supplies READ.
-    * One successor is constructed per action: READ keeps `committed` and
-      advances `observed` by one word; a write advances `committed` by its
+    * The compact successor inputs are persisted per action: READ keeps
+      `committed` and advances `observed` by one word; a write stores its
       ``next_committed`` and advances `observed` by the same word.
+      `_targets_from_rows` materializes one successor `StateInput` per action.
     * The behavior policy only chooses which committed prefix becomes the next
-      training state: READ with probability `read_prob`, otherwise the fixed
-      :data:`FIXED_BEHAVIOR_WRITE` action. It is **not** an immediate-reward
-      argmax, and the Bellman target still uses every labeled action outcome.
+      training state: READ with probability `read_prob`, otherwise a fixed
+      write. The fixed write is :data:`FIXED_BEHAVIOR_WRITE` when it is in
+      `cfg.actions`, otherwise the first configured write action (an unreachable
+      action must not be introduced). It is **not** an immediate-reward argmax,
+      and the Bellman target still uses every labeled action outcome.
 
-    The last state is terminal. Its `terminal_value` is a documented proxy: the
-    negative absolute word-count difference between the labeler's oracle
-    translation (with the behavior prefix forced) and the reference. It is not
-    BLEU or COMET. Proxies such as this are deliberately local to training.
+    The clock advances with :func:`features.advance_virtual_clock` using the
+    behavior action's measured ``pred_s + mt_s``, matching the rollout cadence
+    so `time_since_commit` is in the same range in training and serving.
+
+    `max_states` stops after that many labeled positions. A stopped state is
+    terminal only when it is the sentence's true last decision position.
+
+    A terminal state's `terminal_value` is a documented proxy: the negative
+    absolute word-count difference between ``committed + oracle continuation``
+    and the reference. Including the forced prefix is essential; the
+    continuation alone would make a more complete sentence look worse. It is
+    not BLEU or COMET. Proxies such as this are deliberately local to training.
     """
     cfg = cfg or ControllerConfig()
     stride = int(stride)
@@ -926,34 +962,49 @@ def label_sentence(
     source = str(_field(sentence, "source", ""))
     reference = str(_field(sentence, "reference", ""))
     words = source.split()
-    positions = _decision_positions(len(words), cfg.min_start)
+    full_positions = _decision_positions(len(words), cfg.min_start)
+    if max_states is not None:
+        max_states = int(max_states)
+        if max_states < 0:
+            raise ValueError("max_states must be non-negative")
+        positions = full_positions[:max_states]
+    else:
+        positions = full_positions
     builder = builder if builder is not None else FeatureBuilder()
     rho = float(builder.rho)
     reward_cfg = _reward_config(cfg)
     arrival_gap = float(cfg.arrival_gap)
 
-    behavior_write = FIXED_BEHAVIOR_WRITE
-    label_actions = list(cfg.actions)
-    if behavior_write not in label_actions:
-        # The coverage policy must be able to execute its fixed write, so it is
-        # labelled even when it lies outside the training grid.
-        label_actions.append(behavior_write)
-    label_actions = tuple(label_actions)
+    # The coverage policy may only execute an action that is actually labelled.
+    writes = tuple(action for action in cfg.actions if not action.is_read)
+    if FIXED_BEHAVIOR_WRITE in writes:
+        behavior_write = FIXED_BEHAVIOR_WRITE
+    elif writes:
+        # Do not append (4, 6) to the grid: that would train an action the
+        # controller never evaluates. Fall back to the first configured write.
+        behavior_write = writes[0]
+    else:
+        raise ValueError(
+            "label_sentence needs at least one write action in cfg.actions for "
+            "the behavior policy"
+        )
+    label_actions = tuple(cfg.actions)
 
     tracker = HistoryTracker()
     committed: tuple[str, ...] = ()
     states: list[dict] = []
-    last_index = len(positions) - 1
+    # `index` indexes the (possibly truncated) positions, so this is the true
+    # last decision position even when `max_states` stops the walk early.
+    last_index = len(full_positions) - 1
+    clock_s = 0.0
 
     for index, read_pos in enumerate(positions):
         observed = " ".join(words[:read_pos])
         successor_observed = " ".join(words[: read_pos + 1])
         src_words_after = len(successor_observed.split())
-        now_s = float(read_pos) * arrival_gap
-        successor_now_s = float(read_pos + 1) * arrival_gap
 
         # Build the decision state through the shared online tracker.
-        tracker.set_clock(now_s)
+        tracker.set_clock(clock_s)
         tracker.build(
             builder, observed, committed, predictor_id, translator_id
         )
@@ -987,21 +1038,6 @@ def label_sentence(
             )
 
         terminal = index == last_index
-        if not terminal:
-            # Materialize one successor per action through the shared tracker.
-            # Only the compact successor inputs are persisted (observed prefix,
-            # next_committed, vote statistics); `_targets_from_rows` replays this
-            # same deterministic construction instead of storing 34 floats per
-            # action in the JSONL.
-            for outcome in all_outcomes:
-                _advance_tracker(tracker, outcome, successor_now_s).build(
-                    builder,
-                    successor_observed,
-                    outcome.next_committed,
-                    predictor_id,
-                    translator_id,
-                )
-
         row = {
             "read_pos": int(read_pos),
             "observed": observed,
@@ -1014,8 +1050,7 @@ def label_sentence(
             "history": asdict(tracker.history),
             "runtime": asdict(tracker.runtime),
             "last_commit_s": float(tracker.last_commit_s),
-            "now_s": now_s,
-            "successor_now_s": successor_now_s,
+            "now_s": clock_s,
             "terminal": bool(terminal),
             "terminal_value": None,
             "outcomes": [
@@ -1025,18 +1060,25 @@ def label_sentence(
         }
 
         if terminal:
-            # EOS-flush proxy, explicitly not a learned metric.
-            final_committed = tuple(behavior_outcome.next_committed)
-            proxy_hypothesis = " ".join(
-                labeler.oracle_words(source, final_committed)
-            )
-            row["terminal_value"] = float(
-                terminal_reward(proxy_hypothesis, reference, reward_cfg)
+            # EOS-flush proxy; `_terminal_value_proxy` appends the forced
+            # committed prefix that `oracle_words` omits.
+            row["terminal_value"] = _terminal_value_proxy(
+                labeler,
+                source,
+                tuple(behavior_outcome.next_committed),
+                reference,
+                reward_cfg,
             )
 
         states.append(row)
         committed = tuple(behavior_outcome.next_committed)
-        tracker = _advance_tracker(tracker, behavior_outcome, successor_now_s)
+        # Same clock recurrence as the rollout: settle the source arrival, then
+        # bill the behavior action's measured compute (READ adds none).
+        spent = float(behavior_outcome.pred_s) + float(behavior_outcome.mt_s)
+        clock_s = advance_virtual_clock(
+            clock_s, read_pos, arrival_gap, spent
+        )
+        tracker = _advance_tracker(tracker, behavior_outcome, clock_s)
 
     return {
         "sentence_id": sentence_id,
@@ -1131,9 +1173,10 @@ def _targets_from_rows(
             successor_observed = str(
                 state_row.get("successor_observed") or ""
             )
-            successor_now_s = float(
-                state_row.get("successor_now_s", tracker.now_s)
-            )
+            # Per-action successor clock, using the same recurrence as the
+            # rollout and the labeling walk. READ's stored pred_s/mt_s are 0.
+            pre_now_s = float(state_row.get("now_s", tracker.now_s))
+            read_pos = int(state_row.get("read_pos", 0))
             if "src_words_after" in state_row:
                 src_words_after = int(state_row["src_words_after"])
             elif successor_observed:
@@ -1159,18 +1202,23 @@ def _targets_from_rows(
                     )
                 )
             else:
-                next_states = [
-                    _advance_tracker(
-                        tracker, outcome, successor_now_s
-                    ).build(
-                        builder,
-                        successor_observed,
-                        outcome.next_committed,
-                        predictor_id,
-                        translator_id,
+                next_states = []
+                for outcome in outcomes:
+                    spent = float(outcome.pred_s) + float(outcome.mt_s)
+                    next_now_s = advance_virtual_clock(
+                        pre_now_s, read_pos, cfg.arrival_gap, spent
                     )
-                    for outcome in outcomes
-                ]
+                    next_states.append(
+                        _advance_tracker(
+                            tracker, outcome, next_now_s
+                        ).build(
+                            builder,
+                            successor_observed,
+                            outcome.next_committed,
+                            predictor_id,
+                            translator_id,
+                        )
+                    )
                 targets.extend(
                     build_action_targets(
                         state,
@@ -1209,6 +1257,7 @@ def _label_few_states(
     rows: list[dict] = []
     labeled_states = 0
     for sentence in sentences:
+        remaining = count - labeled_states
         row = label_sentence(
             labeler,
             sentence,
@@ -1218,6 +1267,7 @@ def _label_few_states(
             predictor_id=predictor_id,
             translator_id=translator_id,
             read_prob=read_prob,
+            max_states=remaining,
         )
         rows.append(row)
         labeled_states += len(row.get("states") or [])

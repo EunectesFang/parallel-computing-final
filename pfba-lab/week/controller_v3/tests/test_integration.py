@@ -240,29 +240,33 @@ def make_dataset(harness):
     for index, (sentence_id, source, _reference) in enumerate(SENTENCES):
         words = source.split()
         observed = " ".join(words[:2])
-        next_observed = " ".join(words[:3])
+        successor_observed = " ".join(words[:3])
         committed: tuple[str, ...] = ()
 
         predictor_id = index % 2
         state = builder.build(
             observed, committed, predictor_id=predictor_id, translator_id=predictor_id
         )
-        next_state = builder.build(
-            next_observed,
-            committed,
-            predictor_id=predictor_id,
-            translator_id=predictor_id,
-        )
         outcomes = labeler.label_state(
             observed, committed, source, ACTIONS, seed=cfg.seed + index
         )
+        # One successor per action, matching the production label path.
+        next_states = [
+            builder.build(
+                successor_observed,
+                outcome.next_committed,
+                predictor_id=predictor_id,
+                translator_id=predictor_id,
+            )
+            for outcome in outcomes
+        ]
         targets.extend(
             build_action_targets(
                 state,
                 outcomes,
                 cfg,
-                next_state=next_state,
-                backlog=float(index + 1),
+                next_states=next_states,
+                src_words_after=len(successor_observed.split()),
                 source_advance=1,
                 state_key=f"{sentence_id}:2",
             )
@@ -378,8 +382,8 @@ def test_build_action_targets_uses_immediate_reward_and_read_delay():
     )
     assert [target.action for target in targets] == [READ, Action(2, 4)]
     assert all(target.state_key == "state-0" for target in targets)
-    # Non-terminal rows always advertise the READ-inclusive backup set.
-    assert targets[0].next_actions == (READ, *cfg.actions)
+    # Only rows with a successor advertise a backup action set.
+    assert targets[0].next_actions == ()
     # Post-action backlog without an explicit src_words_after: the pre-action
     # backlog (2) plus the new source word (3) minus this action's emission.
     assert targets[0].value_target == pytest.approx(

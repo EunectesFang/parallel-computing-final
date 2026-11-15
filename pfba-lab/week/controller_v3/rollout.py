@@ -44,7 +44,7 @@ from typing import Sequence
 
 from .action import READ, Action
 from .config import ControllerConfig
-from .features import FeatureBuilder, HistoryTracker
+from .features import FeatureBuilder, HistoryTracker, advance_virtual_clock
 from .post_controller import ADD_2_BRANCHES, PostAction
 from .runtime import ControlledRuntime, StepResult, run_pfba
 
@@ -392,12 +392,11 @@ def _run_rollout_impl(
         # --------------------------------------------------------------
         if read_pos >= source_len:
             prefix = " ".join(committed)
-            completion_s = max(
-                completion_s, (source_len - 1) * float(cfg.arrival_gap)
-            )
             outputs, mt_s = runtime.translate([source], prefix, final=True)
             new_words = tuple(outputs[0].split()) if outputs else ()
-            completion_s += float(mt_s)
+            completion_s = advance_virtual_clock(
+                completion_s, source_len, cfg.arrival_gap, mt_s
+            )
 
             committed_before = len(committed)
             committed = committed + new_words
@@ -491,8 +490,8 @@ def _run_rollout_impl(
         # READ: no sampling, no translation, no commit.
         # --------------------------------------------------------------
         if chosen.is_read:
-            completion_s = max(
-                completion_s, (read_pos - 1) * float(cfg.arrival_gap)
+            completion_s = advance_virtual_clock(
+                completion_s, read_pos, cfg.arrival_gap
             )
             steps.append(
                 _write_step(
@@ -567,26 +566,25 @@ def _run_rollout_impl(
             elif decision.action is PostAction.WAIT:
                 final = None
 
-        completion_s = max(
-            completion_s, (read_pos - 1) * float(cfg.arrival_gap)
-        )
         committed_before = len(committed)
         used_branches = int(chosen.branches) + int(extra_branches)
 
         if final is None:
             # WAIT: the provisional work is billed but nothing is committed.
             spent = provisional.spent_s
-            completion_s += float(spent)
             new_words: tuple[str, ...] = ()
             vote_source = provisional
         else:
             spent = final.spent_s
-            completion_s += float(spent)
             previous = committed
             new_words = tuple(final.committed_after[len(previous):])
             committed = tuple(final.committed_after)
             delays.extend([read_pos] * len(new_words))
             vote_source = final
+
+        completion_s = advance_virtual_clock(
+            completion_s, read_pos, cfg.arrival_gap, spent
+        )
 
         # `StepResult.pred_s` / `mt_s` from `extend` cover only the extension,
         # while `spent_s` is already cumulative. Report the whole decision's

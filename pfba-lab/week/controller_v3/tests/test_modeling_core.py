@@ -28,6 +28,7 @@ from controller_v3.features import (
     HistoryTracker,
     RuntimeInfo,
     StateInput,
+    advance_virtual_clock,
 )
 from controller_v3.labeler import ActionOutcome
 from controller_v3.network import CAVCNetwork, WriteOutputs
@@ -112,6 +113,19 @@ class FakeLabeler:
             outcome(action, emissions[action], tuple(committed))
             for action in actions
         ]
+
+
+class PrefixOracleLabeler:
+    """Oracle continuation that depends on the forced committed prefix."""
+
+    def oracle_words(self, source, committed):
+        del source
+        committed = tuple(committed)
+        if committed == ("the", "cat"):
+            return ("sits",)
+        if committed == ("the", "cat", "sits"):
+            return ()
+        return ()
 
 
 def make_cfg(**overrides) -> ControllerConfig:
@@ -328,10 +342,15 @@ def test_compute_targets_uses_each_targets_own_successor(monkeypatch):
     trainer, cfg, _network = make_trainer()
     successors = [make_state(1), make_state(2), make_state(3)]
     seen: list[StateInput] = []
+    captured: list[tuple[StateInput, torch.Tensor]] = []
+    original_encode = trainer._encode_states
 
     def fake_best(z, state, actions):
-        del z, actions
+        del actions
         seen.append(state)
+        # Keep the row so the test can prove the batch slice is this
+        # successor's encoding, not just any row.
+        captured.append((state, z.clone()))
         return float(state.numeric[SRC_CHARS])  # distinct per successor
 
     monkeypatch.setattr(trainer, "_best_next_value_from_z", fake_best)
@@ -348,6 +367,10 @@ def test_compute_targets_uses_each_targets_own_successor(monkeypatch):
     ]
     assert computed == pytest.approx(expected)
     assert seen == successors
+    for state, z in captured:
+        expected_z = original_encode(trainer.target_network, [state])
+        # Batch kernels can differ from a one-row encode at the 1e-8 level.
+        assert torch.allclose(z, expected_z, atol=1e-6)
 
 
 def test_compute_targets_caches_per_unique_successor_and_action_set(monkeypatch):
@@ -432,6 +455,96 @@ def test_terminal_target_has_no_bootstrap_and_uses_the_terminal_value():
 
     trainer, _, _ = make_trainer()
     assert trainer.compute_targets(targets) == [7.5] * len(targets)
+
+
+def test_terminal_proxy_includes_the_forced_committed_prefix():
+    labeler = PrefixOracleLabeler()
+    reward_cfg = kaggle._reward_config(make_cfg())
+    reference = "the cat sits"
+
+    short_prefix = kaggle._terminal_value_proxy(
+        labeler, "src", ("the", "cat"), reference, reward_cfg
+    )
+    long_prefix = kaggle._terminal_value_proxy(
+        labeler, "src", ("the", "cat", "sits"), reference, reward_cfg
+    )
+
+    # `oracle_words` returns only "sits", so the hypothesis must be
+    # "the cat sits", not "sits". Both prefixes describe the same correct
+    # sentence and score 0 rather than getting worse with a longer prefix.
+    assert short_prefix == 0.0
+    assert long_prefix == 0.0
+    assert long_prefix >= short_prefix
+
+    partial = kaggle._terminal_value_proxy(
+        labeler, "src", ("the", "cat"), "the cat sits down", reward_cfg
+    )
+    assert partial == -1.0
+
+
+def test_max_states_stops_labeling_early_without_false_terminal():
+    cfg = make_cfg()
+    # Eight source words -> five decision positions (3..7). Stop at three.
+    sentence = FakeSentence("s0", "a b c d e f g h", "x y z")
+    row = kaggle.label_sentence(
+        FakeLabeler(),
+        sentence,
+        stride=1,
+        cfg=cfg,
+        read_prob=0.0,
+        max_states=3,
+    )
+
+    assert len(row["states"]) == 3
+    assert [state["read_pos"] for state in row["states"]] == [3, 4, 5]
+    # The stop position is not the true last decision position (7), so it must
+    # keep its successor and must not pretend to be terminal.
+    assert all(state["terminal"] is False for state in row["states"])
+    assert all(state["terminal_value"] is None for state in row["states"])
+
+
+def test_behavior_write_falls_back_to_the_first_configured_action():
+    cfg = make_cfg(actions=(Action(2, 4),))
+    sentence = FakeSentence("s0", "a b c d e f", "x y z")
+    row = kaggle.label_sentence(
+        FakeLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
+
+    # (4,6) is absent from the grid, so the policy uses the first write rather
+    # than appending an action the controller never evaluates.
+    assert row["behavior"]["fixed_action"] == "b2h4"
+    assert {
+        outcome["action"] for outcome in row["states"][0]["outcomes"]
+    } == {"read", "b2h4"}
+
+
+def test_labeling_clock_matches_the_rollout_recurrence():
+    cfg = make_cfg()
+    sentence = FakeSentence("s0", "a b c d e f", "x y z")
+    # read_prob=0.0 makes every behavior action the fixed write, whose
+    # FakeLabeler timing is pred_s=0.1 + mt_s=0.2.
+    row = kaggle.label_sentence(
+        FakeLabeler(), sentence, stride=1, cfg=cfg, read_prob=0.0
+    )
+
+    # The exact recurrence rollout uses: settle the source arrival, then bill
+    # the action's measured compute.
+    expected = []
+    clock = 0.0
+    for read_pos in (3, 4, 5):
+        expected.append(clock)
+        clock = max(clock, (read_pos - 1) * cfg.arrival_gap) + 0.3
+
+    assert [state["now_s"] for state in row["states"]] == pytest.approx(expected)
+    # Every behavior write commits, so time_since_commit resets in both paths.
+    assert all(
+        state["runtime"]["time_since_commit"] == pytest.approx(0.0)
+        for state in row["states"][1:]
+    )
+    # The shared helper is the same function rollout calls.
+    assert advance_virtual_clock(0.0, 3, cfg.arrival_gap, 0.3) == pytest.approx(
+        0.9
+    )
 
 
 # ----------------------------------------------------------------------

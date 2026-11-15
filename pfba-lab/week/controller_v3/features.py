@@ -29,6 +29,7 @@ __all__ = [
     "StateInput",
     "FeatureBuilder",
     "HistoryTracker",
+    "advance_virtual_clock",
     "estimate_length_ratio",
 ]
 
@@ -436,6 +437,24 @@ class HistoryTracker:
             "last_commit_s": float(self.last_commit_s),
             "now_s": float(self.now_s),
         }
+
+
+def advance_virtual_clock(
+    now_s: float,
+    read_pos: int,
+    arrival_gap: float,
+    spent_s: float = 0.0,
+) -> float:
+    """Completion time after one decision, shared by labeling and rollout.
+
+    Both paths advance the clock the same way: the clock is at least the source
+    arrival time of the just-read word (``(read_pos - 1) * gap`` in the rollout
+    cadence) and then advances by the measured compute spent on the action.
+    Using one helper keeps the `time_since_commit` feature in the same range in
+    training and serving; READ passes ``spent_s=0`` and only waits for arrival.
+    """
+    arrived = (int(read_pos) - 1) * float(arrival_gap)
+    return max(float(now_s), arrived) + max(0.0, float(spent_s))
 
 
 def estimate_length_ratio(samples: Sequence[tuple[str, str]]) -> float:

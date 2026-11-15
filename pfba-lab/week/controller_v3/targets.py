@@ -112,9 +112,11 @@ def build_action_targets(
       ``source_advance`` and reduced by the action's own emission
       (``emitted / rho``), which keeps the ablation action-dependent.
 
-    `next_actions` defaults to ``(READ, *cfg.actions)`` for non-terminal rows:
-    the backup must be allowed to value waiting. An empty `state_key` is
-    replaced by `derive_state_key(state)` so it is never empty.
+    `next_actions` defaults to ``(READ, *cfg.actions)`` for non-terminal rows
+    with a successor: the backup must be allowed to value waiting. A row whose
+    successor is missing (or a terminal row) advertises ``()`` because it cannot
+    bootstrap. An empty `state_key` is replaced by `derive_state_key(state)` so
+    it is never empty.
     """
     outcome_list = tuple(outcomes)
     key = state_key or derive_state_key(state)
@@ -203,6 +205,11 @@ def build_action_targets(
             no_emit_target = 1.0 if bool(outcome.no_emit) else 0.0
             emit_target = float(outcome.emitted)
 
+        # Advertise the backup action set only when this row actually has a
+        # successor; a missing successor means no bootstrap, so no action set.
+        row_next_actions = (
+            resolved_next_actions if successors[index] is not None else ()
+        )
         targets.append(
             ActionTarget(
                 state=state,
@@ -213,7 +220,7 @@ def build_action_targets(
                 emit_target=emit_target,
                 state_key=key,
                 next_state=successors[index],
-                next_actions=resolved_next_actions,
+                next_actions=row_next_actions,
                 terminal=bool(terminal),
             )
         )

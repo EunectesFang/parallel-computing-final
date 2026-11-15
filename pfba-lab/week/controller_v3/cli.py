@@ -342,23 +342,32 @@ def _run_smoke(args) -> int:
     for index, (sentence_id, source, _reference) in enumerate(SMOKE_SENTENCES):
         words = source.split()
         observed = " ".join(words[:2])
-        next_observed = " ".join(words[:3])
+        successor_observed = " ".join(words[:3])
         committed: tuple[str, ...] = ()
 
         state = builder.build(observed, committed, predictor_id=0, translator_id=0)
-        next_state = builder.build(
-            next_observed, committed, predictor_id=0, translator_id=0
-        )
         outcomes = labeler.label_state(
             observed, committed, source, SMOKE_ACTIONS, seed=int(args.seed) + index
         )
+        # One successor per action: READ keeps `committed`, each write appends
+        # its own `next_committed`. This exercises the corrected target, not the
+        # legacy shared-successor ablation.
+        next_states = [
+            builder.build(
+                successor_observed,
+                outcome.next_committed,
+                predictor_id=0,
+                translator_id=0,
+            )
+            for outcome in outcomes
+        ]
         targets.extend(
             build_action_targets(
                 state,
                 outcomes,
                 cfg,
-                next_state=next_state,
-                backlog=1.0,
+                next_states=next_states,
+                src_words_after=len(successor_observed.split()),
                 source_advance=1,
                 state_key=f"{sentence_id}:2",
             )
