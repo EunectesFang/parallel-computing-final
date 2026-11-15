@@ -218,6 +218,24 @@ def _median(values: Sequence[float]) -> float:
     return float(statistics.median(values)) if values else 0.0
 
 
+def _resolved_pair_name(adapter, declared: str, models: dict) -> str:
+    """Return the adapter's actual model family name, not the declared alias.
+
+    Confirmation must compare the checkpoint's stored pair against the adapters
+    that are actually loaded. A caller can pass ``predictor_name="small"`` while
+    injecting a large adapter; the stored metadata then disagrees with the
+    weights actually used. When the adapter exposes a Hugging Face `model_id`
+    the id resolves back to its family name, and otherwise the declared name is
+    the only identity available.
+    """
+    model_id = getattr(adapter, "model_id", None)
+    if run_pfba is not None and isinstance(model_id, str):
+        for name, candidate in models.items():
+            if candidate == model_id:
+                return str(name)
+    return str(declared)
+
+
 def _pair_id(explicit, adapter, names: Sequence[str] = ()) -> int:
     """Resolve a model-pair id from an explicit value, adapter attribute, or 0.
 
@@ -383,8 +401,9 @@ def _frozen_vocab(
     A checkpoint trained on dev sentences must be evaluated with the *same*
     word ids; rebuilding a vocabulary from the test sentences would change
     every text-encoder input. The vocabulary is stored in ``extra["vocab"]``
-    by `_train_and_write`. Older checkpoints without it return ``(None, None)``
-    and the caller falls back to the evaluation-sentence vocabulary.
+    by `_train_and_write`. Older checkpoints without it return ``(None, None)``;
+    callers must treat that as a hard error and never rebuild a test-derived
+    vocabulary.
     """
     extra = payload.get("extra") or {}
     tokens = extra.get("vocab")
@@ -400,6 +419,65 @@ def _frozen_vocab(
             vocab.add(str(word))
     ratio = extra.get("length_ratio")
     return vocab, (float(ratio) if ratio is not None else None)
+
+
+def _vocab_tokens(vocab) -> list | None:
+    """Return a storable token list including the PAD/UNK placeholders."""
+    if vocab is None:
+        return None
+    return [
+        None if token is None else str(token)
+        for token in getattr(vocab, "id_to_token", ())
+    ]
+
+
+def _validate_supplied_builder(builder, payload, source: str) -> None:
+    """Require a caller-supplied builder to match the checkpoint's frozen state.
+
+    Confirmation reuses the vocabulary and length-ratio normalization that
+    trained the network. A supplied builder whose vocabulary (word ids) or
+    `rho` differs would silently remap text ids or change `normalized_lag`
+    while the network weights stay fixed, so a mismatch raises instead of
+    producing a plausible-looking but inconsistent evaluation.
+    """
+    extra = payload.get("extra") or {}
+    stored_tokens = extra.get("vocab")
+    if not stored_tokens:
+        return
+    expected = [
+        None if token is None else str(token) for token in stored_tokens
+    ]
+    for label in ("src_vocab", "tgt_vocab"):
+        vocab = getattr(builder, label, None)
+        tokens = _vocab_tokens(vocab)
+        if tokens is not None and tokens != expected:
+            raise ValueError(
+                f"{source} {label} vocabulary does not match the checkpoint's "
+                "stored vocabulary; refusing to reuse a different word-id map"
+            )
+    stored_ratio = extra.get("length_ratio")
+    if stored_ratio is not None:
+        actual = float(getattr(builder, "rho", stored_ratio))
+        if abs(actual - float(stored_ratio)) > 1e-9:
+            raise ValueError(
+                f"{source} length ratio {actual!r} does not match the "
+                f"checkpoint's stored ratio {float(stored_ratio)!r}; refusing "
+                "to apply a different normalization"
+            )
+
+
+def _validate_cost_records_pair(records, predictor_id: int, translator_id: int, source: str) -> None:
+    """Raise when any cost record was measured for a different adapter pair."""
+    expected = (int(predictor_id), int(translator_id))
+    for index, record in enumerate(records or ()):
+        pair = (int(record[0]), int(record[1]))
+        if pair != expected:
+            raise ValueError(
+                f"{source} cost record {index} is for model pair "
+                f"{pair[0]}/{pair[1]} but the resolved pair is "
+                f"{expected[0]}/{expected[1]}; refusing to price with another "
+                "pair's measurements"
+            )
 
 
 # ----------------------------------------------------------------------
@@ -698,11 +776,13 @@ def _load_cost_records(path: Path):
 def _reuse_cost_records(
     path: Path, predictor_id: int, translator_id: int
 ):
-    """Load measured records only when they match the current adapter pair.
+    """Load measured records and enforce the current adapter pair.
 
-    A table measured for ``(0, 0)`` must never price ``(1, 1)``. When the
-    recorded ids differ, the stale file is ignored and the caller recalibrates
-    instead.
+    A table measured for ``(0, 0)`` must never price ``(1, 1)``. A recorded
+    summary or record whose ids differ from the resolved pair raises instead of
+    being silently ignored: mixing pairs would price the training clock with
+    another pair's hardware measurements. Move the stale file aside to
+    recalibrate.
     """
     loaded = _load_cost_records(path)
     if loaded is None:
@@ -712,19 +792,24 @@ def _reuse_cost_records(
         return None
     recorded_pid = summary.get("predictor_id")
     recorded_tid = summary.get("translator_id")
-    mismatch = (
-        recorded_pid is not None and int(recorded_pid) != int(predictor_id)
-    ) or (
-        recorded_tid is not None and int(recorded_tid) != int(translator_id)
+    expected = (int(predictor_id), int(translator_id))
+    recorded = (
+        None if recorded_pid is None else int(recorded_pid),
+        None if recorded_tid is None else int(recorded_tid),
     )
-    if mismatch:
-        print(
-            "[cavc] ignoring cost_records.json for model pair "
-            f"{recorded_pid}/{recorded_tid}; current pair is "
-            f"{predictor_id}/{translator_id}",
-            flush=True,
+    if (
+        (recorded[0] is not None and recorded[0] != expected[0])
+        or (recorded[1] is not None and recorded[1] != expected[1])
+        or any(
+            (int(record[0]), int(record[1])) != expected for record in records
         )
-        return None
+    ):
+        raise ValueError(
+            f"{path} holds cost records for model pair "
+            f"{recorded[0]}/{recorded[1]} but the resolved pair is "
+            f"{expected[0]}/{expected[1]}; move the file aside so the table is "
+            "recalibrated for this adapter pair"
+        )
     return records, summary
 
 
@@ -811,6 +896,66 @@ def _write_traces(path: Path, traces: Sequence[RolloutTrace]) -> None:
                 json.dumps(_trace_record(trace), ensure_ascii=False, sort_keys=True)
                 + "\n"
             )
+
+
+def _nonempty_file(path: Path) -> bool:
+    """True when `path` is a regular file with at least one byte."""
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _deadline_artifact_path(path: Path) -> Path:
+    """Suffixed sibling used when a deadline stop must not clobber results."""
+    return path.with_name(f"{path.stem}.deadline{path.suffix}")
+
+
+def _write_deadline_artifacts(
+    output_dir: Path, summary: dict, traces: Sequence[RolloutTrace]
+) -> dict:
+    """Write an early deadline summary/traces without clobbering good files.
+
+    A deadline-stopped session that produced no labels must not replace a
+    non-empty `summary.json` or `traces.jsonl` from an earlier, productive
+    session with an empty file. When the canonical file is non-empty the
+    early return goes to `summary.deadline.json` / `traces.deadline.jsonl`.
+    Returns the paths actually written.
+    """
+    summary_path = output_dir / "summary.json"
+    traces_path = output_dir / "traces.jsonl"
+    if _nonempty_file(summary_path):
+        summary_path = _deadline_artifact_path(summary_path)
+    if _nonempty_file(traces_path):
+        traces_path = _deadline_artifact_path(traces_path)
+    _write_json(summary_path, summary)
+    _write_traces(traces_path, traces)
+    return {"summary": str(summary_path), "traces": str(traces_path)}
+
+
+def _stage_timer(pfba, predictor, translator, timer=None):
+    """Return a device-synchronized `run_pfba.StageTimer` when none was given.
+
+    Real adapters finish their CUDA work asynchronously, so an unsynchronized
+    `time.perf_counter` around `predictor.sample` / `translator.translate_batch`
+    measures host enqueue time, not GPU wall time. The real-adapters path must
+    therefore time calibration and rollout with `StageTimer(sync)`. An injected
+    timer (tests, callers with their own clock) always wins.
+    """
+    if timer is not None:
+        return timer
+    if pfba is None or not hasattr(pfba, "StageTimer"):
+        return None
+    predictor_device = getattr(predictor, "device", None)
+    translator_device = getattr(translator, "device", None)
+
+    def sync() -> None:
+        if predictor_device:
+            pfba._sync(predictor_device)
+        if translator_device and translator_device != predictor_device:
+            pfba._sync(translator_device)
+
+    return pfba.StageTimer(sync)
 
 
 def _rollout_summary(traces: Sequence[RolloutTrace]) -> dict:
@@ -1487,6 +1632,8 @@ def _skipped_training(n_samples: int) -> dict:
         "no_emit_loss": 0.0,
         "emit_loss": 0.0,
         "n_samples": int(n_samples),
+        "target_seconds": 0.0,
+        "target_calls": 0,
         "status": "skipped",
         "reason": "deadline",
     }
@@ -1634,10 +1781,20 @@ def _validate_feature_stats_payload(stats, source: str) -> None:
             f"{source} feature_stats covers {len(names)} features but "
             f"NUMERIC_FEATURES has {len(NUMERIC_FEATURES)}"
         )
-    if isinstance(features, dict) and set(features) != set(NUMERIC_FEATURES):
+    # Validate names in both mapping and list form. A list is accepted for
+    # older/compact payloads, but it must still name exactly the same features
+    # in the same order as the mapping form; an unordered/partial list would
+    # otherwise pass the length check with the wrong columns.
+    if isinstance(features, dict):
+        if set(features) != set(NUMERIC_FEATURES):
+            raise ValueError(
+                f"{source} feature_stats feature names do not match "
+                "NUMERIC_FEATURES"
+            )
+    elif list(features) != list(NUMERIC_FEATURES):
         raise ValueError(
             f"{source} feature_stats feature names do not match "
-            "NUMERIC_FEATURES"
+            "NUMERIC_FEATURES in list form"
         )
 
 
@@ -1782,7 +1939,14 @@ def _train_and_write(
             network, cfg, pipeline_cost if pipeline_cost is not None else cost_model
         )
         training = trainer.fit(train_targets)
-        trained = True
+        # A checkpoint is a promise that at least one optimisation epoch ran
+        # over at least one labelled sample. `fit` reports 0 epochs for an empty
+        # target list or a non-positive epoch budget, so those runs must not
+        # write a checkpoint that a later confirm would trust.
+        trained = (
+            int(training.get("epochs", 0)) > 0
+            and int(training.get("n_samples", 0)) > 0
+        )
 
     training_extra = {
         "mode": mode,
@@ -1803,6 +1967,17 @@ def _train_and_write(
         "post_controller": (
             "enabled" if post_controller_enabled else "disabled"
         ),
+        # Risk calibration is always a dev-holdout measurement. Record its
+        # provenance so a confirmation summary can state it explicitly instead
+        # of implying the test slice calibrated anything.
+        "risk_calibration": {
+            "source": (
+                "dev_holdout"
+                if calibrate_risk and calibration_targets
+                else "not_run"
+            ),
+            "n_targets": len(calibration_targets) if calibrate_risk else 0,
+        },
     }
     if trained:
         metadata = save_checkpoint(
@@ -1883,6 +2058,11 @@ def _train_and_write(
         ),
     )
     _write_cost_records(cost_path, cost_model.records, cost_summary)
+    # A deadline stop before the first rollout produces an empty trace list.
+    # Never replace a productive session's non-empty traces with it; use a
+    # suffixed file and let the summary's artifact path point at it.
+    if stopped_reason == "deadline" and not traces and _nonempty_file(traces_path):
+        traces_path = _deadline_artifact_path(traces_path)
     _write_traces(traces_path, traces)
 
     # Train-serve feature diagnostics: the serving vectors come from the
@@ -1902,25 +2082,26 @@ def _train_and_write(
 
     paired_payload = None
     if evaluate_fixed:
+        if (
+            stopped_reason == "deadline"
+            and not fixed_traces
+            and _nonempty_file(fixed_traces_path)
+        ):
+            fixed_traces_path = _deadline_artifact_path(fixed_traces_path)
         _write_traces(fixed_traces_path, fixed_traces)
         paired_payload = _paired_metrics(
             traces, fixed_traces, include_comet=include_comet
         )
         _write_json(paired_path, paired_payload)
 
-    # Never calibrate the risk heads on an untrained network: a kept
-    # checkpoint only counts when its own metadata says it was trained.
-    effective_trained = bool(trained) or (
-        checkpoint_status == "kept_existing"
-        and metadata is not None
-        and bool((metadata.get("extra") or {}).get("trained", False))
-    )
+    # Never calibrate the risk heads unless this run actually trained the
+    # network. A kept checkpoint from an earlier session was trained on the
+    # same labels being held out here, so calibrating it now would be
+    # in-sample; report `unavailable` instead. A deadline-skipped run likewise
+    # must not present a calibration it never produced.
     risk_payload = None
     if calibrate_risk:
-        if not effective_trained or checkpoint_status not in {
-            "written",
-            "kept_existing",
-        }:
+        if not trained or checkpoint_status != "written":
             risk_payload = {
                 "status": "unavailable",
                 "reason": "network was not trained in this run",
@@ -1959,6 +2140,9 @@ def _train_and_write(
         "n_train_targets": len(train_targets),
         "n_risk_calibration_targets": len(calibration_targets),
         "training": training,
+        # Bellman-target construction wall time (unique-successor batching +
+        # per-state backup cache), mirrored at the top level for dashboards.
+        "target_wall_s": float(training.get("target_seconds", 0.0)),
         "trained": trained,
         "candidate_mode": candidate_mode,
         "post_controller": (
@@ -2088,6 +2272,10 @@ def run_preflight(
             trust_remote_code=trust_remote_code,
         )
         predictor_devices = (pdev, tdev)
+    # Real adapters finish CUDA work asynchronously. Use the synchronized stage
+    # timer for cost calibration, labeling, and rollout unless the caller
+    # injected one.
+    timer = _stage_timer(pfba, predictor, translator, timer)
 
     if sentences is None:
         sentences = pfba.load_split("dev", int(limit) if int(limit) > 0 else 0)
@@ -2152,8 +2340,14 @@ def run_preflight(
         )
 
     model_pair = {
-        "predictor": predictor_name,
-        "translator": translator_name,
+        # Resolve identity from the loaded adapters, not the caller-declared
+        # aliases, so checkpoint metadata names the pair that actually ran.
+        "predictor": _resolved_pair_name(
+            predictor, predictor_name, pfba.PREDICTORS
+        ),
+        "translator": _resolved_pair_name(
+            translator, translator_name, pfba.TRANSLATORS
+        ),
         "predictor_id": pid,
         "translator_id": tid,
         "predictor_device": predictor_devices[0],
@@ -2273,6 +2467,7 @@ def run_dev(
             trust_remote_code=trust_remote_code,
         )
         predictor_devices = (pdev, tdev)
+    timer = _stage_timer(pfba, predictor, translator, timer)
 
     if sentences is None:
         sentences = pfba.load_split("dev", int(limit) if int(limit) > 0 else 0)
@@ -2442,6 +2637,11 @@ def run_dev(
     )
     if not rows:
         if time.perf_counter() >= deadline:
+            reason = (
+                "deadline stopped the run before any label row was written; "
+                "training, rollout, fixed baseline, paired metrics, and risk "
+                "calibration did not run"
+            )
             summary = {
                 "mode": "dev",
                 "split": "dev",
@@ -2449,6 +2649,7 @@ def run_dev(
                 "trained": False,
                 "n_label_rows": 0,
                 "n_targets": 0,
+                "target_wall_s": 0.0,
                 "label_format": LABEL_FORMAT,
                 "candidate_mode": labeler.candidate_mode,
                 "post_controller": (
@@ -2462,10 +2663,27 @@ def run_dev(
                 "train_sentences": len(train_sentences),
                 "holdout_sentences": len(holdout_sentences),
                 "max_hours": max_hours,
+                # Distinguish "not run" from "absent": every downstream section
+                # is present and explicitly null, with one shared reason.
+                "rollout": None,
+                "rollout_fixed": None,
+                "paired": None,
+                "risk_calibration": None,
+                "artifacts": None,
+                "not_run": {
+                    "reason": reason,
+                    "sections": [
+                        "rollout",
+                        "rollout_fixed",
+                        "paired",
+                        "risk_calibration",
+                        "artifacts",
+                    ],
+                },
                 "notes": ["No label row was written before the deadline."],
             }
-            _write_json(output_dir / "summary.json", summary)
-            _write_traces(output_dir / "traces.jsonl", [])
+            written = _write_deadline_artifacts(output_dir, summary, [])
+            summary["deadline_artifacts"] = written
             return summary
         raise RuntimeError(
             "run_dev has no labeled rows yet; rerun with more time to label "
@@ -2481,8 +2699,12 @@ def run_dev(
         raise RuntimeError("run_dev rebuilt no training targets from labels")
 
     model_pair = {
-        "predictor": predictor_name,
-        "translator": translator_name,
+        "predictor": _resolved_pair_name(
+            predictor, predictor_name, pfba.PREDICTORS
+        ),
+        "translator": _resolved_pair_name(
+            translator, translator_name, pfba.TRANSLATORS
+        ),
         "predictor_id": pid,
         "translator_id": tid,
         "predictor_device": predictor_devices[0],
@@ -2620,6 +2842,7 @@ def run_confirm(
             trust_remote_code=trust_remote_code,
         )
         predictor_devices = (pdev, tdev)
+    timer = _stage_timer(pfba, predictor, translator, timer)
 
     if sentences is None:
         all_test = list(pfba.load_split("test", 0))
@@ -2643,8 +2866,14 @@ def run_confirm(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
     model_pair = {
-        "predictor": predictor_name,
-        "translator": translator_name,
+        # Compare the checkpoint against the adapters that actually loaded, not
+        # the caller-declared aliases.
+        "predictor": _resolved_pair_name(
+            predictor, predictor_name, pfba.PREDICTORS
+        ),
+        "translator": _resolved_pair_name(
+            translator, translator_name, pfba.TRANSLATORS
+        ),
         "predictor_id": pid,
         "translator_id": tid,
         "predictor_device": predictor_devices[0],
@@ -2654,6 +2883,8 @@ def run_confirm(
         # Validate the stored pair/vocab/feature metadata before any weights
         # are loaded, so a mismatch cannot silently remap the text ids.
         _validate_checkpoint_metadata(payload, model_pair)
+        if builder is not None:
+            _validate_supplied_builder(builder, payload, "supplied builder")
 
     if builder is not None and network is not None:
         # A caller-supplied frozen builder and network are used as-is. The
@@ -2716,10 +2947,22 @@ def run_confirm(
                 "untrained weights as a confirmation result; pass "
                 "allow_untrained=True only for a diagnostic run."
             )
+        _validate_cost_records_pair(
+            loaded_metadata.get("cost_records"),
+            pid,
+            tid,
+            f"checkpoint {checkpoint_path}",
+        )
         if cost_model is None and loaded_metadata.get("cost_records"):
             cost_model = MeasuredCostTable(loaded_metadata["cost_records"])
     if cost_model is None:
         cost_model = MeasuredCostTable()
+    else:
+        records = getattr(cost_model, "records", None)
+        if records is None:
+            table = getattr(cost_model, "table", None)
+            records = getattr(table, "records", None)
+        _validate_cost_records_pair(records, pid, tid, "supplied cost model")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2761,12 +3004,28 @@ def run_confirm(
         traces, fixed_traces, include_comet=include_comet
     )
     if calibration_targets:
+        # Calibration is a dev-holdout measurement. A target reconstructed from
+        # the test slice would be calibrating on the frozen evaluation data,
+        # which this mode must never do.
+        for target in calibration_targets:
+            key = str(getattr(target, "state_key", ""))
+            if "test:" in key or key.startswith("test"):
+                raise ValueError(
+                    "run_confirm refuses calibration targets derived from the "
+                    f"test slice (state_key {key!r}); calibrate on dev holdout "
+                    "targets only"
+                )
         risk_payload = risk_calibration(network, calibration_targets)
     else:
         risk_payload = {
             "status": "unavailable",
-            "reason": "run_confirm has no held-out ActionTargets; pass "
-            "calibration_targets to calibrate the risk heads",
+            # State the provenance explicitly: confirmation never calibrates on
+            # the test slice. The dev run measures calibration on its bucket-1
+            # holdout and records it there; this summary must not imply a test
+            # calibration happened.
+            "reason": "calibration comes from the dev holdout (see the dev "
+            "summary/checkpoint), never from the test slice; pass "
+            "calibration_targets only when they are dev-derived",
             "n": 0,
             "error_risk": {},
             "no_emit": {},
@@ -2801,6 +3060,11 @@ def run_confirm(
         "seed": int(cfg.seed),
         "post_controller": "enabled" if post_controller else "disabled",
         "risk_calibration": risk_payload,
+        # Explicit provenance: any calibration reported here is dev-holdout
+        # derived; the test slice is never calibrated on.
+        "risk_calibration_source": (
+            "dev_holdout" if calibration_targets else "none"
+        ),
         "vocab_source": vocab_source,
         "git_commit": (
             loaded_metadata.get("git_commit")
@@ -2832,6 +3096,8 @@ def run_confirm(
             "BLEU/COMET report the status returned by run_pfba.",
             "The fixed (4,6) baseline uses the same runtime and per-candidate "
             "sampling path; paired.json holds sentence-paired intervals.",
+            "Risk calibration is a dev-holdout measurement recorded by the dev "
+            "run; confirm never calibrates on the test slice.",
             (
                 "Post controller enabled; its no-emit sigmoid is an "
                 "uncalibrated heuristic input, not a hard safety threshold."

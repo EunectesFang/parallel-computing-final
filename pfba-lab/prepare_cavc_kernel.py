@@ -190,9 +190,11 @@ def write_kernel(
     script = build_entry_script(sources, command)
     entry_path = stage / "kaggle_entry.py"
     metadata_path = stage / "kernel-metadata.json"
-    entry_path.write_text(script, encoding="utf-8")
-    metadata_path.write_text(
-        json.dumps(build_metadata(), indent=2) + "\n", encoding="utf-8"
+    # Pin LF so the committed bytes are identical on every platform and the
+    # `--check` hash comparison is meaningful.
+    entry_path.write_bytes(script.encode("utf-8"))
+    metadata_path.write_bytes(
+        (json.dumps(build_metadata(), indent=2) + "\n").encode("utf-8")
     )
     return {
         "stage": stage,
@@ -202,6 +204,48 @@ def write_kernel(
     }
 
 
+def expected_outputs(
+    sources: dict[str, str] | None = None,
+    command: tuple[str, ...] | list[str] = DEFAULT_COMMAND,
+) -> tuple[str, str]:
+    """Return the exact ``(entry_text, metadata_text)`` a regeneration writes."""
+    sources = bundle_sources() if sources is None else dict(sources)
+    entry = build_entry_script(sources, command)
+    metadata = json.dumps(build_metadata(), indent=2) + "\n"
+    return entry, metadata
+
+
+def verify_kernel(
+    output_dir: Path | str = STAGE_DIR,
+    sources: dict[str, str] | None = None,
+    command: tuple[str, ...] | list[str] = DEFAULT_COMMAND,
+) -> tuple[bool, list[str]]:
+    """Compare the committed bundle byte-for-byte with generator output.
+
+    Returns ``(ok, problems)``. ``problems`` names every stale or missing file
+    so a caller can fail a check or a test can report exactly what changed. No
+    file is written.
+    """
+    stage = Path(output_dir)
+    expected_entry, expected_metadata = expected_outputs(sources, command)
+    problems: list[str] = []
+    for name, expected in (
+        ("kaggle_entry.py", expected_entry),
+        ("kernel-metadata.json", expected_metadata),
+    ):
+        path = stage / name
+        if not path.is_file():
+            problems.append(f"{path} is missing")
+            continue
+        actual = path.read_bytes().decode("utf-8")
+        if actual != expected:
+            problems.append(
+                f"{path} is stale: regenerate with "
+                "`python pfba-lab/prepare_cavc_kernel.py`"
+            )
+    return (not problems), problems
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -209,12 +253,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(STAGE_DIR),
         help="directory for the generated kaggle_entry.py and metadata",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="verify the committed bundle instead of regenerating it; exits 1 "
+        "when kaggle_entry.py or kernel-metadata.json is stale",
+    )
     return parser
 
 
 def main(argv=None) -> int:
     """Generate the kernel and print every bundled file's SHA-256."""
     args = build_parser().parse_args(argv)
+    if args.check:
+        ok, problems = verify_kernel(args.output_dir)
+        if ok:
+            print(f"bundle up to date: {Path(args.output_dir)}")
+            return 0
+        for problem in problems:
+            print(f"stale bundle: {problem}")
+        return 1
     result = write_kernel(args.output_dir)
     print(f"generated: {result['entry']}")
     print(f"generated: {result['metadata']}")

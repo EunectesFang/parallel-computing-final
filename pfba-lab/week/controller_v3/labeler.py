@@ -141,8 +141,18 @@ class CounterfactualLabeler:
         if mode == "per_candidate" and not callable(
             getattr(predictor, "sample", None)
         ):
-            # No per-candidate sampler: use the batched path, but report what
-            # actually ran instead of claiming parity the predictor cannot give.
+            # No per-candidate sampler: use the batched path, but warn instead
+            # of silently downgrading and claiming parity the predictor cannot
+            # give. The recorded `candidate_mode` reflects what actually ran.
+            import warnings
+
+            warnings.warn(
+                "candidate_mode='per_candidate' was requested but the "
+                "predictor has no `sample` method; downgrading to the legacy "
+                "'batched' path, which draws from a different sampling stream",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             mode = "batched"
         self.candidate_mode = mode
         self.predictor = predictor

@@ -25,12 +25,14 @@ from controller_v3.cost_model import (
     MeasuredCostTable,
     PipelineCostModel,
 )
-from controller_v3.features import NUMERIC_FEATURES, FeatureBuilder
+from controller_v3.features import NUMERIC_FEATURES, FeatureBuilder, StateInput
 from controller_v3.labeler import ActionOutcome, CounterfactualLabeler
 from controller_v3.network import CAVCNetwork, WriteOutputs
 from controller_v3.rollout import run_fixed_rollout, run_rollout
-from controller_v3.runtime import StepResult
+from controller_v3.evaluator import risk_calibration
+from controller_v3.runtime import ControlledRuntime, StepResult
 from controller_v3.text_encoder import Vocab
+from controller_v3.trainer import ActionTarget
 
 # Long enough to have several decision positions past min_start=3.
 SENTENCES = (
@@ -254,9 +256,20 @@ def test_run_preflight_writes_artifacts_and_honest_metrics(tmp_path):
         "traces.jsonl",
         "config.json",
         "cost_records.json",
+        "feature_stats.json",
         "checkpoint.pt",
     ):
         assert (tmp_path / name).is_file(), name
+
+    # Preflight writes the train/serve feature diagnostics even though it does
+    # not run the fixed baseline or risk calibration.
+    feature_payload = json.loads(
+        (tmp_path / "feature_stats.json").read_text(encoding="utf-8")
+    )
+    assert feature_payload["candidate_mode"] == "per_candidate"
+    assert feature_payload["training"]["n"] == summary["n_states"]
+    assert set(feature_payload["serving"]["features"]) == set(NUMERIC_FEATURES)
+    assert "warnings" in feature_payload["serving"]
 
     assert summary["mode"] == "preflight"
     assert summary["split"] == "dev"
@@ -1111,7 +1124,9 @@ def test_reuse_cost_records_rejects_other_model_pair(tmp_path):
         {"predictor_id": 0, "translator_id": 0},
     )
     assert kaggle._reuse_cost_records(path, 0, 0) is not None
-    assert kaggle._reuse_cost_records(path, 1, 1) is None
+    # A table measured for another pair must raise, not silently recalibrate.
+    with pytest.raises(ValueError, match="model pair|resolved pair"):
+        kaggle._reuse_cost_records(path, 1, 1)
 
 
 # ----------------------------------------------------------------------
@@ -1177,7 +1192,7 @@ def _small_pair():
     }
 
 
-def _write_checkpoint(path, harness, extra):
+def _write_checkpoint(path, harness, extra, cost_model=None):
     """Write a controller checkpoint with a caller-controlled `trained` flag."""
     cfg = harness["cfg"]
     kaggle.save_checkpoint(
@@ -1186,7 +1201,7 @@ def _write_checkpoint(path, harness, extra):
         cfg,
         [0.0] * cfg.numeric_dim,
         [1.0] * cfg.numeric_dim,
-        None,
+        cost_model,
         extra={
             "vocab": list(harness["vocab"].id_to_token),
             "length_ratio": 1.0,
@@ -1680,3 +1695,474 @@ def test_labeling_without_a_cost_model_falls_back_to_serial_compute():
     # StubLabeler: pred_s + mt_s = 0.2 per write, plus the 0.6 s arrival of the
     # first decision. This is the documented no-cost-model fallback only.
     assert row["states"][1]["now_s"] == pytest.approx(0.8)
+
+
+# ----------------------------------------------------------------------
+# Task 10: trained gating, deadline schema, calibration provenance,
+# strict pair/vocab/cost-record checks, and hardening tests
+# ----------------------------------------------------------------------
+def _run_dev(harness, output_dir, **overrides):
+    cfg = harness["cfg"]
+    kwargs = dict(
+        limit=0,
+        stride=1,
+        output_dir=str(output_dir),
+        max_hours=1.0,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=harness["sentences"],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+    kwargs.update(overrides)
+    return kaggle.run_dev(**kwargs)
+
+
+def test_run_dev_marks_trained_false_when_fit_runs_no_epoch(tmp_path):
+    harness = make_harness(epochs=0)
+    summary = _run_dev(harness, tmp_path)
+
+    # `fit` saw samples but ran zero optimisation epochs, so this is not a
+    # trained network and no checkpoint may be written.
+    assert summary["training"]["epochs"] == 0
+    assert summary["training"]["n_samples"] > 0
+    assert summary["trained"] is False
+    assert summary["checkpoint"]["status"] == "not_written"
+    assert summary["checkpoint"]["path"] is None
+    assert summary["artifacts"]["checkpoint"] is None
+    assert not (tmp_path / "checkpoint.pt").exists()
+    assert summary["risk_calibration"]["status"] == "unavailable"
+    assert summary["risk_calibration"]["reason"] == (
+        "network was not trained in this run"
+    )
+
+
+def test_deadline_early_return_preserves_prior_artifacts_and_is_explicit(tmp_path):
+    prior_summary = '{"prior": "summary"}\n'
+    prior_traces = '{"prior": "traces"}\n'
+    (tmp_path / "summary.json").write_text(prior_summary, encoding="utf-8")
+    (tmp_path / "traces.jsonl").write_text(prior_traces, encoding="utf-8")
+
+    harness = make_harness()
+    summary = _run_dev(harness, tmp_path, max_hours=0.0)
+
+    # The empty deadline return must not clobber the productive session's
+    # non-empty artifacts; it goes to suffixed files instead.
+    assert (tmp_path / "summary.json").read_text(encoding="utf-8") == prior_summary
+    assert (tmp_path / "traces.jsonl").read_text(encoding="utf-8") == prior_traces
+    assert (tmp_path / "summary.deadline.json").is_file()
+    assert (tmp_path / "traces.deadline.jsonl").is_file()
+
+    assert summary["stopped_reason"] == "deadline"
+    assert summary["trained"] is False
+    for key in ("risk_calibration", "rollout_fixed", "paired", "artifacts"):
+        assert key in summary
+        assert summary[key] is None
+    assert summary["not_run"]["reason"]
+    assert "risk_calibration" in summary["not_run"]["sections"]
+
+
+def test_dev_calibration_values_match_independent_holdout(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    summary = _run_dev(harness, tmp_path)
+    assert summary["risk_calibration"]["status"] == "ok"
+
+    # Reconstruct the same training targets from the persisted labels, split
+    # them the same way, and recompute calibration on the checkpoint weights.
+    rows = kaggle._read_jsonl(tmp_path / "labels.jsonl")
+    train_sentences = [
+        sentence
+        for sentence in harness["sentences"]
+        if kaggle.is_train(str(kaggle._field(sentence, "sentence_id", "")))
+    ]
+    builder, _, vocab = kaggle._components(cfg, train_sentences)
+    targets, _states = kaggle._targets_from_rows(rows, builder, cfg, 0, 0)
+    _train, holdout = kaggle._split_calibration_targets(targets)
+    assert holdout
+
+    restored = CAVCNetwork(
+        cfg, src_vocab_size=len(vocab), tgt_vocab_size=len(vocab)
+    )
+    load_checkpoint(tmp_path / "checkpoint.pt", restored)
+    independent = risk_calibration(restored, holdout)
+
+    assert independent["status"] == "ok"
+    assert independent["n"] == summary["risk_calibration"]["n"]
+    assert independent["error_risk"]["brier"] == pytest.approx(
+        summary["risk_calibration"]["error_risk"]["brier"]
+    )
+    assert independent["no_emit"]["ece"] == pytest.approx(
+        summary["risk_calibration"]["no_emit"]["ece"]
+    )
+
+
+def _target(state_key, action=None):
+    return ActionTarget(
+        state=StateInput(
+            numeric=tuple([0.0] * len(NUMERIC_FEATURES)),
+            predictor_id=0,
+            translator_id=0,
+            src_ids=(2,),
+            tgt_ids=(3,),
+        ),
+        action=action or Action(4, 6),
+        value_target=0.0,
+        error_target=1.0,
+        no_emit_target=0.0,
+        emit_target=1.0,
+        state_key=state_key,
+    )
+
+
+def test_confirm_risk_calibration_is_dev_derived_and_never_test(tmp_path):
+    harness = make_harness()
+    builder, network = _frozen_builder_network(harness)
+    kwargs = dict(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "confirm"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        cfg=harness["cfg"],
+        builder=builder,
+        network=network,
+        timer=harness["timer"],
+    )
+    summary = kaggle.run_confirm(**kwargs)
+    assert summary["risk_calibration"]["status"] == "unavailable"
+    assert summary["risk_calibration_source"] == "none"
+    assert "dev holdout" in summary["risk_calibration"]["reason"]
+    assert any(
+        "never calibrates on the test slice" in note
+        for note in summary["notes"]
+    )
+
+    with pytest.raises(ValueError, match="test slice|dev holdout"):
+        kaggle.run_confirm(
+            calibration_targets=[_target("test:0140:3")], **kwargs
+        )
+
+
+def test_confirm_refuses_cost_records_for_another_pair(tmp_path):
+    harness = make_harness()
+    checkpoint = tmp_path / "pair.pt"
+    # Metadata declares pair (1, 1), but the stored measurements are (0, 0).
+    _write_checkpoint(
+        checkpoint,
+        harness,
+        {
+            "trained": True,
+            "model_pair": {
+                "predictor": "small",
+                "translator": "small",
+                "predictor_id": 1,
+                "translator_id": 1,
+            },
+        },
+        cost_model=MeasuredCostTable(
+            [(0, 0, Action(4, 6), 0.1, 0.2, 0.3)]
+        ),
+    )
+    with pytest.raises(ValueError, match="cost record|model pair"):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / "confirm"),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=checkpoint,
+            predictor_id=1,
+            translator_id=1,
+            timer=harness["timer"],
+        )
+
+
+def test_confirm_refuses_a_supplied_builder_with_a_different_vocab(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    preflight_dir = tmp_path / "preflight"
+    kaggle.run_preflight(
+        limit=3,
+        output_dir=str(preflight_dir),
+        label_states=2,
+        rollout_sentences=1,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=harness["sentences"],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+    # A builder whose vocabulary contains an extra word cannot reproduce the
+    # checkpoint's word ids, so confirmation must raise instead of remapping.
+    wider = Vocab()
+    for token in harness["vocab"].id_to_token:
+        if token is not None:
+            wider.add(token)
+    wider.add("unseen-extra")
+    bad_builder = FeatureBuilder(
+        length_ratio=1.0, src_vocab=wider, tgt_vocab=wider
+    )
+    with pytest.raises(ValueError, match="vocabulary"):
+        kaggle.run_confirm(
+            offset=140,
+            limit=1,
+            output_dir=str(tmp_path / "confirm"),
+            predictor=harness["predictor"],
+            translator=harness["translator"],
+            sentences=_confirm_test_sentences(),
+            checkpoint_path=preflight_dir / "checkpoint.pt",
+            builder=bad_builder,
+            network=harness["network"],
+            timer=harness["timer"],
+        )
+
+
+def test_confirm_resolves_pair_identity_from_adapters_not_call_names(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    preflight_dir = tmp_path / "preflight"
+    kaggle.run_preflight(
+        limit=3,
+        output_dir=str(preflight_dir),
+        label_states=2,
+        rollout_sentences=1,
+        seed=cfg.seed,
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=harness["sentences"],
+        cfg=cfg,
+        predictor_id=0,
+        translator_id=0,
+        timer=harness["timer"],
+    )
+    # The loaded adapters are the small pair even though the caller declares
+    # "large"; identity must come from the adapters, so no mismatch is raised.
+    harness["predictor"].model_id = kaggle.run_pfba.PREDICTORS["small"]
+    harness["translator"].model_id = kaggle.run_pfba.TRANSLATORS["small"]
+    summary = kaggle.run_confirm(
+        offset=140,
+        limit=1,
+        output_dir=str(tmp_path / "confirm"),
+        predictor=harness["predictor"],
+        translator=harness["translator"],
+        sentences=_confirm_test_sentences(),
+        checkpoint_path=preflight_dir / "checkpoint.pt",
+        predictor_name="large",
+        translator_name="large",
+        timer=harness["timer"],
+    )
+    assert summary["model_pair"]["predictor"] == "small"
+    assert summary["model_pair"]["translator"] == "small"
+    assert summary["model_pair"]["predictor_id"] == 0
+    assert summary["model_pair"]["translator_id"] == 0
+
+
+def test_rollout_prices_actions_with_estimate_marginal():
+    harness = make_harness()
+    cfg = ControllerConfig(
+        seed=7,
+        actions=(Action(4, 6),),
+        min_start=3,
+        # Disable the advantage baseline so the high write value is selected
+        # outright; either way the chosen action's cost is the marginal one.
+        advantage_baseline=None,
+    )
+    network = RecordingNetwork()
+    pipeline = PipelineCostModel(MeasuredCostTable())
+    marginal_calls: list[tuple] = []
+
+    def fake_marginal(*args, **kwargs):
+        marginal_calls.append((args, kwargs))
+        return 0.123
+
+    # The rollout must ask the runtime to price the action through the
+    # `PipelineCostModel.marginal_wall` schedule, not `predict().wall_s`.
+    pipeline.marginal_wall = fake_marginal
+    runtime = ControlledRuntime(
+        harness["predictor"],
+        harness["translator"],
+        cfg,
+        timer=harness["timer"],
+        cost_model=pipeline,
+    )
+    trace = run_rollout(
+        harness["sentences"][0],
+        harness["predictor"],
+        harness["translator"],
+        network,
+        harness["builder"],
+        pipeline,
+        cfg,
+        runtime=runtime,
+    )
+    write_steps = [step for step in trace.steps if step["action"] == "b4h6"]
+    assert write_steps
+    assert marginal_calls
+    for step in write_steps:
+        assert step["cost"] == pytest.approx(0.123)
+
+
+class _CommittingRuntime:
+    """Execute emits one word and reports a high no-emit, over-budget write."""
+
+    def __init__(self):
+        self.t_pred_free = 0.0
+        self.t_mt_free = 0.0
+
+    def execute(self, observed, committed, action, seed):
+        del observed, action, seed
+        return StepResult(
+            candidates=("x",),
+            selected="x",
+            committed_after=tuple(committed) + ("x",),
+            pred_s=0.1,
+            mt_s=0.1,
+            spent_s=1.5,
+            vote_top1=0.1,
+            vote_margin=0.0,
+            vote_entropy=0.0,
+            no_emit=False,
+        )
+
+    def translate(self, sources, prefix, final=False):
+        del sources, prefix, final
+        return ["x"], 0.0
+
+
+class _NoEmitNetwork(RecordingNetwork):
+    """Write head with a high no-emit logit so the post controller WAITs."""
+
+    def write_values(self, z, actions):
+        outputs = super().write_values(z, actions)
+        outputs.no_emit = torch.full_like(outputs.value, 5.0)
+        return outputs
+
+
+def test_post_controller_actually_changes_a_committed_step():
+    harness = make_harness()
+    cfg = ControllerConfig(seed=7, actions=(Action(2, 4),), min_start=3)
+    sentence = harness["sentences"][0]
+
+    def roll(post_controller):
+        return run_rollout(
+            sentence,
+            harness["predictor"],
+            harness["translator"],
+            _NoEmitNetwork(),
+            harness["builder"],
+            None,
+            cfg,
+            runtime=_CommittingRuntime(),
+            post_controller=post_controller,
+        )
+
+    without = roll(None)
+    with_post = roll(kaggle.PostController())
+    plain_step = next(
+        step for step in without.steps if step["action"] == "b2h4"
+    )
+    waited_step = next(
+        step for step in with_post.steps if step["action"] == "b2h4"
+    )
+
+    # Without the controller the provisional word is committed; WAIT discards
+    # it, so the committed prefix really differs (not just a summary string).
+    assert plain_step["committed_after"] > plain_step["committed_before"]
+    assert waited_step["post_action"] == "wait"
+    assert waited_step["committed_after"] == waited_step["committed_before"]
+    assert waited_step["new_words"] == ()
+
+
+def test_checkpoint_roundtrips_legacy_and_six_field_cost_records(tmp_path):
+    harness = make_harness()
+    cfg = harness["cfg"]
+    model = MeasuredCostTable(
+        [
+            (0, 0, Action(2, 4), 0.1, 0.2),
+            (0, 0, Action(4, 6), 0.3, 0.4, 0.5),
+        ]
+    )
+    path = tmp_path / "records.pt"
+    metadata = kaggle.save_checkpoint(
+        path,
+        harness["network"],
+        cfg,
+        [0.0] * cfg.numeric_dim,
+        [1.0] * cfg.numeric_dim,
+        model,
+    )
+    assert len(metadata["cost_records"][0]) == 5
+    assert len(metadata["cost_records"][1]) == 6
+    assert metadata["cost_records"][1][5] == pytest.approx(0.5)
+
+    restored = CAVCNetwork(
+        cfg,
+        src_vocab_size=len(harness["vocab"]),
+        tgt_vocab_size=len(harness["vocab"]),
+    )
+    loaded = load_checkpoint(path, restored)
+    assert loaded["cost_records"][0][3:5] == pytest.approx((0.1, 0.2))
+    assert loaded["cost_records"][1][3:] == pytest.approx((0.3, 0.4, 0.5))
+
+
+def test_committed_kernel_bundle_byte_matches_generator():
+    module = _load_prepare_module()
+    expected_entry, expected_metadata = module.expected_outputs()
+    committed_entry = (
+        module.STAGE_DIR / "kaggle_entry.py"
+    ).read_bytes().decode("utf-8")
+    committed_metadata = (
+        module.STAGE_DIR / "kernel-metadata.json"
+    ).read_bytes().decode("utf-8")
+    assert committed_entry == expected_entry
+    assert committed_metadata == expected_metadata
+    ok, problems = module.verify_kernel()
+    assert ok, problems
+
+
+def test_risk_calibration_rejects_nonpositive_buckets():
+    harness = make_harness()
+    with pytest.raises(ValueError, match="buckets"):
+        risk_calibration(harness["network"], [_target("s0:3")], buckets=0)
+
+
+def test_feature_stats_list_form_validates_names():
+    kaggle._validate_feature_stats_payload(
+        {"n": 1, "features": list(NUMERIC_FEATURES)}, "payload"
+    )
+    with pytest.raises(ValueError, match="list form"):
+        kaggle._validate_feature_stats_payload(
+            {"n": 1, "features": list(reversed(NUMERIC_FEATURES))}, "payload"
+        )
+
+
+def test_stage_timer_defaults_to_synchronized_run_pfba_timer():
+    harness = make_harness()
+    timer = kaggle._stage_timer(
+        kaggle.run_pfba,
+        harness["predictor"],
+        harness["translator"],
+        None,
+    )
+    # Without an injected clock the real-adapters path must synchronize device
+    # work rather than read an unsynchronized perf_counter.
+    assert isinstance(timer, kaggle.run_pfba.StageTimer)
+    injected = harness["timer"]
+    assert (
+        kaggle._stage_timer(
+            kaggle.run_pfba,
+            harness["predictor"],
+            harness["translator"],
+            injected,
+        )
+        is injected
+    )

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import inspect
 import math
+import warnings
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -195,6 +196,14 @@ def _action_cost(
                 tgt_words,
             )
         )
+    warnings.warn(
+        "rollout pricing used a plain cost model without `marginal_wall`; "
+        "falling back to the serial pred_s + mt_s diagnostic instead of "
+        "pipeline wall time. Wrap the model in PipelineCostModel for the "
+        "schedule-aware price.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
     estimate = cost_model.predict(
         vector.predictor_id,
         vector.translator_id,

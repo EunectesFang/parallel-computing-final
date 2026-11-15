@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import copy
 import random
+import time
+import warnings
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -157,6 +159,9 @@ class CAVCTrainer:
         )
         # Per-epoch component losses, exposed for callers that want a curve.
         self.history: list[dict[str, float]] = []
+        # Warn at most once per trainer when a plain measured model is used
+        # instead of a schedule-aware `PipelineCostModel`.
+        self._warned_plain_cost = False
 
     # ------------------------------------------------------------------
     # Target computation
@@ -296,6 +301,17 @@ class CAVCTrainer:
                 )
         if marginal is not None:
             return float(marginal)
+        if not self._warned_plain_cost:
+            warnings.warn(
+                "CAVCTrainer was given a plain cost model without "
+                "`marginal_wall`; the Bellman target falls back to the serial "
+                "pred_s + mt_s diagnostic instead of pipeline wall time. Wrap "
+                "the model in PipelineCostModel to price the same schedule "
+                "rollout uses.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._warned_plain_cost = True
         wall = getattr(estimate, "wall_s", estimate)
         return float(wall)
 
@@ -317,6 +333,9 @@ class CAVCTrainer:
                 "no_emit_loss": 0.0,
                 "emit_loss": 0.0,
                 "n_samples": len(targets),
+                # No epoch ran, so no Bellman target was computed.
+                "target_seconds": 0.0,
+                "target_calls": 0,
             }
 
         optimizer = torch.optim.AdamW(
@@ -328,9 +347,17 @@ class CAVCTrainer:
         batch_size = max(1, int(self.train_config.batch_size))
         sample_count = len(targets)
         update_every = max(1, int(self.cfg.target_update_every))
+        target_seconds = 0.0
+        target_calls = 0
 
         for epoch in range(epochs):
+            # `compute_targets` encodes every unique successor in one batch and
+            # caches the backup per `(state, actions)`, so this wall time is the
+            # amortised cost of the whole epoch's Bellman targets.
+            target_start = time.perf_counter()
             target_values = self.compute_targets(targets)
+            target_seconds += max(0.0, time.perf_counter() - target_start)
+            target_calls += 1
             order = list(range(sample_count))
             rng.shuffle(order)
 
@@ -379,6 +406,10 @@ class CAVCTrainer:
             "no_emit_loss": final["no_emit"],
             "emit_loss": final["emit"],
             "n_samples": sample_count,
+            # Wall time spent building Bellman targets (unique-successor
+            # batching + per-state cache), logged in the dev summary.
+            "target_seconds": float(target_seconds),
+            "target_calls": int(target_calls),
         }
 
     def _batch_loss(

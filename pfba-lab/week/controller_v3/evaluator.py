@@ -137,6 +137,11 @@ def risk_calibration(
     """
     import torch
 
+    if int(buckets) <= 0:
+        raise ValueError(
+            f"buckets must be positive; got {buckets!r}"
+        )
+
     rows = [
         target
         for target in targets

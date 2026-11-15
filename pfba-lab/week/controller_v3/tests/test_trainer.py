@@ -289,7 +289,11 @@ def test_fit_reduces_the_total_loss_over_thirty_epochs():
         "no_emit_loss",
         "emit_loss",
         "n_samples",
+        "target_seconds",
+        "target_calls",
     }
+    assert result["target_calls"] == 30
+    assert result["target_seconds"] >= 0.0
     assert len(trainer.history) == 30
     for stats in trainer.history:
         assert all(torch.isfinite(torch.tensor(value)) for value in stats.values())
@@ -427,3 +431,61 @@ def test_bellman_cost_falls_back_to_serial_wall_without_scheduling():
         0, 0, ACTIONS[0], 5, 3
     )
     assert trainer._cost(state, ACTIONS[0]) == pytest.approx(estimate.wall_s)
+
+
+# ----------------------------------------------------------------------
+# Task 10: target batching/caching and target wall-time accounting
+# ----------------------------------------------------------------------
+def test_compute_targets_batches_and_caches_many_rows_sharing_a_successor(
+    monkeypatch,
+):
+    trainer, _, _ = make_trainer()
+    successor = make_state(99)
+    targets = [
+        ActionTarget(
+            state=make_state(index % 7),
+            action=ACTIONS[index % len(ACTIONS)],
+            value_target=float(index),
+            error_target=0.0,
+            no_emit_target=0.0,
+            emit_target=1.0,
+            state_key=f"k{index}",
+            next_state=successor,
+            next_actions=ACTIONS,
+        )
+        for index in range(60)
+    ]
+
+    encode_batches: list[int] = []
+    original_encode = trainer._encode_states
+
+    def counting_encode(model, states):
+        encode_batches.append(len(states))
+        return original_encode(model, states)
+
+    backup_calls: list[tuple] = []
+    original_backup = trainer._best_next_value_from_z
+
+    def counting_backup(z, state, actions):
+        backup_calls.append((state, tuple(actions)))
+        return original_backup(z, state, actions)
+
+    monkeypatch.setattr(trainer, "_encode_states", counting_encode)
+    monkeypatch.setattr(trainer, "_best_next_value_from_z", counting_backup)
+
+    computed = trainer.compute_targets(targets)
+
+    # 60 rows collapse to one unique successor, encoded in a single one-row
+    # batch, and the max-over-actions backup is priced exactly once.
+    assert len(computed) == len(targets)
+    assert encode_batches == [1]
+    assert len(backup_calls) == 1
+
+
+def test_fit_reports_zero_target_wall_time_when_no_epoch_runs():
+    trainer, _, _ = make_trainer()
+    trainer.train_config = TrainConfig(epochs=0, batch_size=9, lr=0.01)
+    result = trainer.fit(make_targets())
+    assert result["epochs"] == 0
+    assert result["target_calls"] == 0
+    assert result["target_seconds"] == 0.0

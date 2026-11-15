@@ -299,6 +299,12 @@ prefix unchanged. ADD_2 can also change the selected prefix, not merely extend
 it. The thresholds in `post_controller.py` are hand-picked defaults, not tuned
 on data.
 
+The controller is **off by default**. Pass `--post-controller` to enable it;
+when off, the risk heads are training-only auxiliaries and no uncalibrated
+sigmoid is used as a hard safety threshold. `summary.json` records
+`post_controller: "enabled" | "disabled"` for every run, so an enabled run is
+never confused with a disabled one.
+
 ## Running the CPU tests
 
 From the repository root:
@@ -331,7 +337,9 @@ output directory. `summary.json` contains the training losses, the checkpoint
 metadata, and the rollout summary; `traces.jsonl` contains one JSON record per
 sentence with every decision step. The smoke forces BLEU to `unavailable` and
 COMET to `skipped` because its three sentences are synthetic; no
-translation-quality score is produced or implied.
+translation-quality score is produced or implied. **No BLEU, COMET, LAAL, or
+value-learning quality claim may be made from the CPU smoke**: it is a wiring
+test over synthetic sentences, not an experiment.
 
 `--train-labels PATH` and `--rollout` are parsed but raise
 `NotImplementedError`: they need a real predictor/translator adapter, and the
@@ -377,12 +385,17 @@ cd pfba-lab/week
   --output-dir outputs/cavc_preflight
 
 # Development run (~4-6 h): label dev hash buckets 2-9, train, and roll out
-# dev holdout bucket 1. `--max-hours` bounds labeling, cost calibration,
-# training, and rollout; when it expires the run writes a partial summary with
-# stopped_reason="deadline" and keeps the last checkpoint. labels.jsonl
-# flushes one row per sentence so a later session resumes by sentence_id.
+# dev holdout bucket 1. `--stride` must be 1: the labels are true one-step
+# transitions (labels.jsonl is tagged `label_format=5`). `--max-hours` bounds
+# labeling, cost calibration, training, and rollout; when it expires the run
+# writes a partial summary with stopped_reason="deadline" and keeps the last
+# checkpoint. labels.jsonl flushes one row per sentence so a later session
+# resumes by sentence_id from labels.jsonl and checkpoint.pt. Add
+# `--post-controller` to enable the optional STOP/ADD_2/WAIT controller; it is
+# off by default. `--candidate-mode` defaults to `per_candidate` (the runtime
+# path); `batched` is only an ablation.
 "D:/MINICONDA/envs/py312/python.exe" -m controller_v3.kaggle \
-  --mode dev --limit 0 --stride 4 --max-hours 10 \
+  --mode dev --limit 0 --stride 1 --max-hours 10 \
   --predictor small --translator small \
   --output-dir outputs/cavc_dev
 
@@ -426,6 +439,16 @@ with the repository-relative layout (`week/controller_v3/*.py`,
 resolves. It prints the generated paths and the SHA-256 of every bundled file.
 It never pushes or submits to Kaggle.
 
+To verify the committed bundle is byte-identical to what the current sources
+would generate (for example in CI, before submitting):
+
+```bash
+"D:/MINICONDA/envs/py312/python.exe" pfba-lab/prepare_cavc_kernel.py --check
+```
+
+The check exits non-zero and names the stale file when the committed kernel is
+older than the sources.
+
 Expected total: roughly **7-11 h** (preflight 0.5-1 h, dev 4-6 h, confirm
 1-2 h), leaving buffer inside a ~23-30 h weekly quota. A single Kaggle session
 is capped near 12 h; resume a dev run by rerunning the same command.
@@ -454,16 +477,19 @@ Data is WMT German-to-English: **dev = newstest2013** (3,003 sentences) and
    about 1-2 h.
 
 Total: roughly **7-11 h** of a ~23-30 h weekly quota, leaving buffer for reruns.
-A single Kaggle session is capped near 12 h, so split the run and resume from
-`checkpoint.py`.
+A single Kaggle session is capped near 12 h, so split the dev run and resume
+from `labels.jsonl` (one flushed row per sentence, skipped by `sentence_id`)
+plus the last `checkpoint.pt`. No separate resume command is needed: rerun the
+same `--mode dev` command and it continues from those artifacts.
 
 Split policy:
 
 * Development train: dev hash buckets 2-9 (2,422 sentences).
 * Development tune: dev bucket 0 (286 sentences).
 * Development holdout: dev bucket 1 (295 sentences).
-* Clean confirmation: `test:0140 onward` (test sentences 0012-0139 are already
-  consumed by earlier folds and must not be reused for tuning).
+* Clean confirmation: `test:0140 onward`. `test:0000`–`test:0139` were consumed
+  by earlier folds and must not be reported as a clean slice or reused for
+  tuning; without `--allow-consumed`, an earlier `--offset` raises.
 
 Buckets 0 and 1 were used by the earlier fold1/fold2 experiments. V3 is a new
 model, but those buckets are historically consumed; report that caveat rather
