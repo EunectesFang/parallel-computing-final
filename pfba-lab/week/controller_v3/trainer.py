@@ -74,19 +74,28 @@ def pairwise_ranking_loss(
     state_keys: Sequence[str],
     epsilon: float,
     max_pairs: int = MAX_RANK_PAIRS_PER_STATE,
+    write_mask: Sequence[bool] | None = None,
 ) -> torch.Tensor:
-    """Pairwise logistic ranking loss over actions of the same state.
+    """Pairwise logistic ranking loss over write actions of the same state.
 
     Only pairs whose target values differ by more than `epsilon` contribute.
-    Pairs are grouped by `state_key` and capped at `max_pairs` per state. When
-    no pair qualifies, the result is a differentiable zero so a state with only
-    READ or only one action adds no NaN and no spurious gradient.
+    Pairs are grouped by `state_key` and capped at `max_pairs` per state. Rows
+    with an empty `state_key` are skipped: an empty key carries no state
+    identity, so pairing them would compare different states. When `write_mask`
+    is supplied, only write-action rows may be paired; READ rows never enter the
+    ranking loss. When no pair qualifies, the result is a differentiable zero so
+    a state with only READ or only one write action adds no NaN and no spurious
+    gradient.
     """
     if predictions.numel() == 0:
         return predictions.sum() * 0.0
 
     groups: dict[str, list[int]] = {}
     for index, key in enumerate(state_keys):
+        if not key:
+            continue
+        if write_mask is not None and not bool(write_mask[index]):
+            continue
         groups.setdefault(key, []).append(index)
 
     terms: list[torch.Tensor] = []
@@ -347,6 +356,7 @@ class CAVCTrainer:
             y,
             state_keys,
             self.cfg.rank_epsilon,
+            write_mask=write_mask.tolist(),
         )
 
         zero = q_values.new_zeros(())

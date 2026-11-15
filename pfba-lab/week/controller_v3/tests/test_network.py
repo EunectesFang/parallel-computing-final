@@ -1,6 +1,7 @@
 """Tests for the CAVC value network contract."""
 
 import torch
+from torch.nn import functional as F
 
 from controller_v3.action import DEFAULT_ACTIONS
 from controller_v3.config import ControllerConfig
@@ -83,6 +84,48 @@ def test_model_ids_outside_the_embedding_table_are_clamped():
         numeric, explicitly_clamped, explicitly_clamped, src_ids, tgt_ids
     )
     assert torch.allclose(z_raw, z_clamped)
+
+
+def test_expected_emit_is_softplus_of_the_raw_head_once():
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)
+    network.eval()
+    captured = {}
+    handle = network.emit_out.register_forward_hook(
+        lambda module, inputs, output: captured.setdefault("raw", output.detach())
+    )
+    try:
+        _, write = network(*make_inputs(3), DEFAULT_ACTIONS)
+    finally:
+        handle.remove()
+
+    raw = captured["raw"].squeeze(-1).reshape(write.expected_emit.shape)
+    assert torch.allclose(write.expected_emit, F.softplus(raw))
+
+
+def test_error_and_no_emit_heads_return_raw_logits():
+    cfg = ControllerConfig()
+    network = CAVCNetwork(cfg, src_vocab_size=30, tgt_vocab_size=30)
+    network.eval()
+    captured = {}
+    handles = [
+        network.error_out.register_forward_hook(
+            lambda module, inputs, output: captured.setdefault("error", output.detach())
+        ),
+        network.no_emit_out.register_forward_hook(
+            lambda module, inputs, output: captured.setdefault("no_emit", output.detach())
+        ),
+    ]
+    try:
+        _, write = network(*make_inputs(3), DEFAULT_ACTIONS)
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    raw_error = captured["error"].squeeze(-1).reshape(write.error_risk.shape)
+    raw_no_emit = captured["no_emit"].squeeze(-1).reshape(write.no_emit.shape)
+    assert torch.allclose(write.error_risk, raw_error)
+    assert torch.allclose(write.no_emit, raw_no_emit)
 
 
 def test_every_parameter_receives_a_gradient():

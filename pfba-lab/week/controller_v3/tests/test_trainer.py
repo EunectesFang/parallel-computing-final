@@ -173,6 +173,42 @@ def test_ranking_loss_caps_pairs_per_state():
     assert loss.item() == pytest.approx(torch.stack(expected_terms).mean().item())
 
 
+def test_ranking_loss_skips_empty_state_keys():
+    predictions = torch.tensor([1.0, 0.0], requires_grad=True)
+    targets = torch.tensor([0.0, 1.0])
+    loss = pairwise_ranking_loss(predictions, targets, ["", ""], epsilon=0.05)
+    assert loss.item() == pytest.approx(0.0)
+    loss.backward()
+    assert torch.isfinite(predictions.grad).all()
+
+
+def test_ranking_loss_skips_read_rows():
+    predictions = torch.tensor([0.0, 0.0, 0.0], requires_grad=True)
+    # Only the READ row (index 1) differs by more than epsilon.
+    targets = torch.tensor([0.0, 5.0, 0.01])
+    loss = pairwise_ranking_loss(
+        predictions,
+        targets,
+        ["s", "s", "s"],
+        epsilon=0.05,
+        write_mask=[True, False, True],
+    )
+    assert loss.item() == pytest.approx(0.0)
+    loss.backward()
+    assert torch.isfinite(predictions.grad).all()
+
+
+def test_fit_is_finite_when_state_keys_are_empty():
+    trainer, _, _ = make_trainer(dropout=0.0)
+    trainer.train_config = TrainConfig(epochs=3, batch_size=9, lr=0.01)
+    targets = [
+        replace(target, state_key="") for target in make_targets()
+    ]
+    result = trainer.fit(targets)
+    assert all(torch.isfinite(torch.tensor(value)) for value in result.values())
+    assert result["rank_loss"] == 0.0
+
+
 def test_fit_reduces_the_total_loss_over_thirty_epochs():
     trainer, cfg, network = make_trainer(target_update_every=1000, dropout=0.0, seed=3)
     trainer.train_config = TrainConfig(epochs=30, batch_size=9, lr=0.05)
