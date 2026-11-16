@@ -1,0 +1,39 @@
+{
+  "candidate": "../kaggle-runs/results/cavc-v5-eval-convex/cavc_eval_v5/v5_convex.traces.jsonl",
+  "fixed": "../kaggle-runs/results/cavc-v4-eval-linear/cavc_eval_v4_linear/fixed.traces.jsonl",
+  "n_pairs": 60,
+  "metrics": {
+    "bleu": {
+      "metric": "bleu",
+      "status": "ok",
+      "point": -0.5253911330687486,
+      "low": -4.04659035683025,
+      "high": 2.768214745932813,
+      "n": 60
+    },
+    "laal": {
+      "metric": "laal",
+      "status": "ok",
+      "point": -0.11903965353046295,
+      "low": -0.39011264257332895,
+      "high": 0.14608673527166202,
+      "n": 60
+    },
+    "completion_s": {
+      "metric": "completion_s",
+      "status": "ok",
+      "point": -4.629253503216691,
+      "low": -5.606013361512927,
+      "high": -3.6644625609733597,
+      "n": 60
+    },
+    "chrf": {
+      "metric": "chrf",
+      "status": "ok",
+      "point": -0.37231136591185293,
+      "low": -3.0998612877653646,
+      "high": 2.2153012254121025,
+      "n": 60
+    }
+  }
+}

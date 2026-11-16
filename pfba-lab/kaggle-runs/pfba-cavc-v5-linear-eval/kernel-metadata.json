@@ -1,0 +1,15 @@
+{
+  "id": "eunectesqaq/pfba-cavc-v5-linear-eval",
+  "title": "pfba cavc v5 linear eval",
+  "code_file": "kaggle_entry.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "eunectesqaq/cavc-v5-checkpoints"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

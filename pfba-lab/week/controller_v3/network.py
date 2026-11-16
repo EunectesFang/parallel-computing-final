@@ -32,6 +32,10 @@ class WriteOutputs:
     error_risk: torch.Tensor     # [B, A] logits
     no_emit: torch.Tensor        # [B, A] logits
     expected_emit: torch.Tensor  # [B, A] non-negative softplus output
+    # CAVC-Q V4 three-component decomposition. ``None`` in V3 mode.
+    quality: torch.Tensor | None = None
+    delay: torch.Tensor | None = None
+    wall: torch.Tensor | None = None
 
 
 class CAVCNetwork(nn.Module):
@@ -76,7 +80,7 @@ class CAVCNetwork(nn.Module):
         self.read_head = nn.Sequential(
             nn.Linear(hidden, 32),
             nn.SiLU(),
-            nn.Linear(32, 1),
+            nn.Linear(32, 3 if cfg.tri_value else 1),
         )
 
         # A write action is described by six numbers and encoded into 16 units.
@@ -93,7 +97,41 @@ class CAVCNetwork(nn.Module):
             nn.Linear(64, 32),
             nn.SiLU(),
         )
-        self.value_out = nn.Linear(32, 1)
+        if cfg.tri_value:
+            self.quality_out = nn.Linear(32, 1)
+            self.delay_out = nn.Linear(32, 1)
+            self.wall_out = nn.Linear(32, 1)
+        else:
+            self.value_out = nn.Linear(32, 1)
+        self.error_out = nn.Linear(32, 1)
+        self.no_emit_out = nn.Linear(32, 1)
+        self.emit_out = nn.Linear(32, 1)
+        # Non-persistent so old checkpoints keep loading; the training-set
+        # statistics live in the checkpoint metadata and are applied by
+        # `set_feature_stats` on both training and inference.
+        self.register_buffer(
+            "feature_mean", torch.zeros(cfg.numeric_dim), persistent=False
+        )
+        self.register_buffer(
+            "feature_std", torch.ones(cfg.numeric_dim), persistent=False
+        )
+
+    def set_feature_stats(self, mean, std) -> None:
+        """Install training-set standardisation statistics for `encode`."""
+        mean_tensor = torch.as_tensor(list(mean), dtype=torch.float32)
+        std_tensor = torch.as_tensor(list(std), dtype=torch.float32)
+        if mean_tensor.numel() != self.feature_mean.numel():
+            raise ValueError(
+                f"feature_mean has {mean_tensor.numel()} values, expected "
+                f"{self.feature_mean.numel()}"
+            )
+        if std_tensor.numel() != self.feature_std.numel():
+            raise ValueError(
+                f"feature_std has {std_tensor.numel()} values, expected "
+                f"{self.feature_std.numel()}"
+            )
+        self.feature_mean.copy_(mean_tensor)
+        self.feature_std.copy_(std_tensor.clamp_min(1e-6))
         self.error_out = nn.Linear(32, 1)
         self.no_emit_out = nn.Linear(32, 1)
         self.emit_out = nn.Linear(32, 1)
@@ -114,6 +152,10 @@ class CAVCNetwork(nn.Module):
         """
         dtype = self.numeric_encoder[0].weight.dtype
         numeric = numeric.to(dtype=dtype)
+        if self.cfg.feature_normalize:
+            numeric = (numeric - self.feature_mean.to(dtype)) / self.feature_std.to(
+                dtype
+            )
         src_ids = src_ids.long()
         tgt_ids = tgt_ids.long()
 
@@ -132,8 +174,28 @@ class CAVCNetwork(nn.Module):
         return self.fusion(fused)
 
     def read_value(self, z: torch.Tensor) -> torch.Tensor:
-        """Return the scalar READ value for each row of `z` as `[B]`."""
-        return self.read_head(z).squeeze(-1)
+        """Return the scalar READ value for each row of `z` as `[B]`.
+
+        In three-component mode this is the quality component, kept for callers
+        that only need a scalar; use `read_components` for the full tuple.
+        """
+        values = self.read_head(z)
+        return values[..., 0] if self.cfg.tri_value else values.squeeze(-1)
+
+    def read_components(
+        self, z: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return READ `(quality, delay, wall)` values, each `[B]`."""
+        if not self.cfg.tri_value:
+            raise RuntimeError("read_components requires cfg.tri_value=True")
+        values = self.read_head(z)
+        # Delay and wall are non-negative costs; softplus prevents a negative
+        # prediction from making an action look artificially cheap.
+        return (
+            values[..., 0],
+            F.softplus(values[..., 1]),
+            F.softplus(values[..., 2]),
+        )
 
     def write_values(self, z: torch.Tensor, actions: Sequence[Action]) -> WriteOutputs:
         """Score each write action for every row of `z`.
@@ -149,6 +211,9 @@ class CAVCNetwork(nn.Module):
                 error_risk=z.new_zeros(batch, 0),
                 no_emit=z.new_zeros(batch, 0),
                 expected_emit=z.new_zeros(batch, 0),
+                quality=z.new_zeros(batch, 0) if self.cfg.tri_value else None,
+                delay=z.new_zeros(batch, 0) if self.cfg.tri_value else None,
+                wall=z.new_zeros(batch, 0) if self.cfg.tri_value else None,
             )
 
         features = torch.tensor(
@@ -164,11 +229,24 @@ class CAVCNetwork(nn.Module):
         hidden = self.write_head(combined.reshape(batch * len(actions), -1))
         hidden = hidden.reshape(batch, len(actions), -1)
 
+        if self.cfg.tri_value:
+            quality = self.quality_out(hidden).squeeze(-1)
+            delay = F.softplus(self.delay_out(hidden)).squeeze(-1)
+            wall = F.softplus(self.wall_out(hidden)).squeeze(-1)
+        else:
+            quality = delay = wall = None
         return WriteOutputs(
-            value=self.value_out(hidden).squeeze(-1),
+            value=(
+                self.value_out(hidden).squeeze(-1)
+                if not self.cfg.tri_value
+                else quality
+            ),
             error_risk=self.error_out(hidden).squeeze(-1),
             no_emit=self.no_emit_out(hidden).squeeze(-1),
             expected_emit=F.softplus(self.emit_out(hidden)).squeeze(-1),
+            quality=quality,
+            delay=delay,
+            wall=wall,
         )
 
     def forward(

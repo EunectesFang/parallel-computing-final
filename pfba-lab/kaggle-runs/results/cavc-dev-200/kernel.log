@@ -1,0 +1,47 @@
+[{"stream_name":"stderr","time":20.69285368,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":20.692894723,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.692899596,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.692902193,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":20.692904703,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stdout","time":20.949597194,"data":"week/controller_v3/__init__.py SHA-256: 4292684d752d01ad6a287963abcd32027b9d38bf93fc07a581e8b4548c3c7fd4\n"}
+,{"stream_name":"stdout","time":20.949772437,"data":"week/controller_v3/action.py SHA-256: 856d5d19dc1ba82c1be7144355bbe4d778d698d8d9757024f962ff73103988f1\n"}
+,{"stream_name":"stdout","time":20.950059224,"data":"week/controller_v3/checkpoint.py SHA-256: e9592c65ab3b5c91e5a8bd5e19b8d4fbfd2c74d96ab4d8deb6f9eb95a1104b0c\n"}
+,{"stream_name":"stdout","time":20.950432753,"data":"week/controller_v3/cli.py SHA-256: 98799e2ce6a6f3e1ed53f2506a791ab7c35572b568c7365f99272a43e26a5727\n"}
+,{"stream_name":"stdout","time":20.950638292,"data":"week/controller_v3/config.py SHA-256: 41aa29a4ef148a882d0db4873bcd145cce651d58cfee907eb72a41f29b28e4a1\n"}
+,{"stream_name":"stdout","time":20.950914154,"data":"week/controller_v3/cost_model.py SHA-256: 541b84df670319a56579e5a41da7fed4f5cc0e4f3592888c39e090b003c5acaa\n"}
+,{"stream_name":"stdout","time":20.951190644,"data":"week/controller_v3/evaluator.py SHA-256: c50f5604d0d92bdcbec2c6a7dcf4ea93358d4c8f7e4e73975fe26745d0733967\n"}
+,{"stream_name":"stdout","time":20.951511535,"data":"week/controller_v3/features.py SHA-256: c0ac6fcd4fa2ed25c56e588a6f74ab6fc63cd093f749e108d47b5b6694334daa\n"}
+,{"stream_name":"stdout","time":20.952263179,"data":"week/controller_v3/kaggle.py SHA-256: 1218ee045bd544a64ed473a2f9e969da94c9d7d5251c0ddd822ed4921e39d0e6\n"}
+,{"stream_name":"stdout","time":20.952554737,"data":"week/controller_v3/labeler.py SHA-256: f43d0df205d25ca70987199aeea07571a3b34b30124d2fb44fdf20d715fdbcdf\n"}
+,{"stream_name":"stdout","time":20.952783745,"data":"week/controller_v3/network.py SHA-256: dfc260296894cb4d6f00798507d356356d7a8a9817f71bdf915957038f5e4432\n"}
+,{"stream_name":"stdout","time":20.953008028,"data":"week/controller_v3/post_controller.py SHA-256: 5bf1e9c5819e0909690f9a428583e07401da8815fecfd63cc29d306b0ea2bfa5\n"}
+,{"stream_name":"stdout","time":20.953215826,"data":"week/controller_v3/reward.py SHA-256: 3d942c6c88645db34f0c5709b3dd568ab2d79641fa1167feac1e8b657c575556\n"}
+,{"stream_name":"stdout","time":20.953568364,"data":"week/controller_v3/rollout.py SHA-256: 63e6196ba289acc611f10a4acdb8a7b54a4d33ac2f01ad63d7f744f50fbe2119\n"}
+,{"stream_name":"stdout","time":20.953848119,"data":"week/controller_v3/runtime.py SHA-256: 756d068746cda962938b38b0b7b0d43db6e7d04d33c693af1e861481b45faf8d\n"}
+,{"stream_name":"stdout","time":20.954113116,"data":"week/controller_v3/targets.py SHA-256: 2f6d04660eff4f19f52a965c6fe7dae5edd4bc940fd5d3ab4c69d6c1c6e756b2\n"}
+,{"stream_name":"stdout","time":20.954354564,"data":"week/controller_v3/text_encoder.py SHA-256: 2c2dd3987aaa551749c52167978fc63586cc6d127bbb763ec000eeccd74a4094\n"}
+,{"stream_name":"stdout","time":20.954644593,"data":"week/controller_v3/trainer.py SHA-256: 1217952cbbd8be563eb29dd8f9aa3b0994c9ae4d15e678f31c9aa1a4e2ebe9af\n"}
+,{"stream_name":"stdout","time":20.954861785,"data":"week/cpu_embedding.py SHA-256: c154f0178108068afd33df62d2f4f1af43cdce1a4fa04657ede7760a29defbe7\n"}
+,{"stream_name":"stdout","time":20.955254982,"data":"paired/run_pfba.py SHA-256: f0ad07e2d2dd17809690172e03f99deef7da28481c96753052e8d83d09a0ac27\n"}
+,{"stream_name":"stderr","time":41.401435212,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":58.08472806,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":58.084766601,"data":"I0000 00:00:1794799881.197619      33 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stdout","time":79.559532748,"data":"[cavc] predictor small@cuda:0 x translator small@cuda:0\n"}
+,{"stream_name":"stdout","time":1648.096553217,"data":"[cavc] labeled 25 new dev sentences\n"}
+,{"stream_name":"stdout","time":3052.055141342,"data":"[cavc] labeled 50 new dev sentences\n"}
+,{"stream_name":"stdout","time":4551.350519948,"data":"[cavc] labeled 75 new dev sentences\n"}
+,{"stream_name":"stdout","time":5840.522948638,"data":"[cavc] labeled 100 new dev sentences\n"}
+,{"stream_name":"stdout","time":7283.09998787,"data":"[cavc] labeled 125 new dev sentences\n"}
+,{"stream_name":"stdout","time":8657.191490434,"data":"[cavc] labeled 150 new dev sentences\n"}
+,{"stream_name":"stdout","time":9775.407356198,"data":"[cavc] dev complete: states=2308 targets=23080 rollouts=17\n"}
+,{"stream_name":"stdout","time":9775.407414502,"data":"[cavc] BLEU=ok COMET=skipped\n"}
+,{"stream_name":"stdout","time":9775.407418709,"data":"[cavc] post_controller=disabled candidate_mode=per_candidate risk_calibration=ok\n"}
+,{"stream_name":"stdout","time":9775.407422123,"data":"[cavc] paired learned-vs-fixed metrics: bleu=ok, laal=ok, completion_s=ok, comet=skipped\n"}
+,{"stream_name":"stdout","time":9775.407425536,"data":"[cavc] wrote /kaggle/working/cavc_dev/summary.json\n"}
+,{"stream_name":"stderr","time":9782.686714047,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":9782.686759012,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":9782.950772148,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":9782.950801488,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":9783.777842974,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":9784.373189908,"data":"[NbConvertApp] Writing 1169474 bytes to __results__.html\n"}
+]

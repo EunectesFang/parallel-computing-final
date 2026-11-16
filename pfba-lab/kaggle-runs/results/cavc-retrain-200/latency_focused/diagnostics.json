@@ -1,0 +1,207 @@
+{
+  "guarded_action_counts": {
+    "b2h10": 84,
+    "b2h4": 808,
+    "b4h4": 64,
+    "b6h10": 301,
+    "b6h4": 457,
+    "read": 594
+  },
+  "n_states": 2308,
+  "q_target_mae": 8.877791786888567,
+  "q_target_spearman": 0.3323136413143698,
+  "q_top1_match_fraction": 0.21273830155979204,
+  "risk_calibration": {
+    "buckets": 10,
+    "error_risk": {
+      "base_rate": 0.24315297261189045,
+      "brier": 0.1838454761722928,
+      "buckets": [
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.1,
+          "lo": 0.0,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": 0.04810926237948185,
+          "count": 830,
+          "hi": 0.2,
+          "lo": 0.1,
+          "mean_label": 0.23373493975903614,
+          "mean_predicted": 0.1856256773795543
+        },
+        {
+          "abs_gap": 0.007990401286721321,
+          "count": 3163,
+          "hi": 0.3,
+          "lo": 0.2,
+          "mean_label": 0.22889661713563073,
+          "mean_predicted": 0.23688701842235205
+        },
+        {
+          "abs_gap": 0.025028528467345712,
+          "count": 498,
+          "hi": 0.4,
+          "lo": 0.3,
+          "mean_label": 0.3493975903614458,
+          "mean_predicted": 0.3243690618941001
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.5,
+          "lo": 0.4,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.6,
+          "lo": 0.5,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.7,
+          "lo": 0.6,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.8,
+          "lo": 0.7,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.9,
+          "lo": 0.8,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 1.0,
+          "lo": 0.9,
+          "mean_label": null,
+          "mean_predicted": null
+        }
+      ],
+      "ece": 0.01729426279706249,
+      "mean_predicted": 0.2371139488573127
+    },
+    "n": 4491,
+    "no_emit": {
+      "base_rate": 0.36161211311511915,
+      "brier": 0.22000451441907865,
+      "buckets": [
+        {
+          "abs_gap": 0.04945477445332568,
+          "count": 225,
+          "hi": 0.1,
+          "lo": 0.0,
+          "mean_label": 0.035555555555555556,
+          "mean_predicted": 0.08501033000888124
+        },
+        {
+          "abs_gap": 0.04881748603774824,
+          "count": 731,
+          "hi": 0.2,
+          "lo": 0.1,
+          "mean_label": 0.1997264021887825,
+          "mean_predicted": 0.15090891615103424
+        },
+        {
+          "abs_gap": 0.08500779094972333,
+          "count": 908,
+          "hi": 0.3,
+          "lo": 0.2,
+          "mean_label": 0.3370044052863436,
+          "mean_predicted": 0.2519966143366203
+        },
+        {
+          "abs_gap": 0.07094282410939506,
+          "count": 1632,
+          "hi": 0.4,
+          "lo": 0.3,
+          "mean_label": 0.42463235294117646,
+          "mean_predicted": 0.3536895288317814
+        },
+        {
+          "abs_gap": 0.03624285808140204,
+          "count": 980,
+          "hi": 0.5,
+          "lo": 0.4,
+          "mean_label": 0.4704081632653061,
+          "mean_predicted": 0.43416530518390406
+        },
+        {
+          "abs_gap": 0.15888052825767274,
+          "count": 15,
+          "hi": 0.6,
+          "lo": 0.5,
+          "mean_label": 0.6666666666666666,
+          "mean_predicted": 0.5077861384089939
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.7,
+          "lo": 0.6,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.8,
+          "lo": 0.7,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.9,
+          "lo": 0.8,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 1.0,
+          "lo": 0.9,
+          "mean_label": null,
+          "mean_predicted": null
+        }
+      ],
+      "ece": 0.06183030027123421,
+      "mean_predicted": 0.30473720106566105
+    },
+    "status": "ok",
+    "threshold_note": "Predicted probabilities come from an uncalibrated sigmoid. Use them as diagnostics or soft inputs only, never as a hard safety threshold."
+  },
+  "v3_action_counts": {
+    "b2h10": 34,
+    "b2h4": 672,
+    "b4h4": 62,
+    "b6h10": 268,
+    "b6h4": 362,
+    "read": 910
+  },
+  "v3_b6h10": 268,
+  "v3_h10_fraction": 0.21602288984263232,
+  "v3_read_fraction": 0.39428076256499134
+}

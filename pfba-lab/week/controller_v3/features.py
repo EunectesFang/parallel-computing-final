@@ -7,7 +7,10 @@ confidence values. It never sees the full source, source length, reference,
 oracle continuation, or future words. Training labels are built in
 `labeler.py`, which is a separate path.
 
-`NUMERIC_FEATURES` is the authoritative order of the 34 numeric values.
+`NUMERIC_FEATURES` is the authoritative order of the numeric values. V5
+removed the four token-confidence slots and their masks (the adapters do not
+expose logits) and the four cost/queue-reference slots (always zero on the
+single-GPU runtime), so every remaining input is live.
 """
 
 from __future__ import annotations
@@ -65,10 +68,6 @@ SURFACE_FEATURES = (
     "last_capital",
     "subordinate_marker",
     "current_clause_len",
-    "pred_cost_ref",
-    "mt_cost_ref",
-    "pred_queue_work",
-    "mt_queue_work",
     "time_since_commit",
     "arrival_slack",
 )
@@ -82,7 +81,10 @@ CONFIDENCE_FEATURES = (
 
 MASK_FEATURES = tuple(f"{name}_available" for name in CONFIDENCE_FEATURES)
 
-NUMERIC_FEATURES = SURFACE_FEATURES + CONFIDENCE_FEATURES + MASK_FEATURES  # 34
+# V5: only live inputs enter the vector. The confidence/mask tuples remain
+# exported for callers that still construct `OptionalConfidence`, but they are
+# not part of `NUMERIC_FEATURES`.
+NUMERIC_FEATURES = SURFACE_FEATURES  # 22
 
 # Window used when a vocabulary is supplied. It matches
 # `ControllerConfig.text_window_src` / `text_window_tgt`.
@@ -160,7 +162,7 @@ class OptionalConfidence:
 
 @dataclass(frozen=True)
 class FeatureVector:
-    """One state: 34 numeric values plus model ids and optional text ids."""
+    """One state: ``len(NUMERIC_FEATURES)`` values plus model/text ids."""
 
     numeric: tuple[float, ...]
     predictor_id: int
@@ -203,7 +205,7 @@ def _normalize_marker_word(word: str) -> str:
 
 
 class FeatureBuilder:
-    """Builds the 34-value online state vector.
+    """Builds the online state vector (``len(NUMERIC_FEATURES)``).
 
     `length_ratio` is the training-estimated source/target ratio `rho`. It is
     used only for `normalized_lag`; the `length_ratio` feature is always the
@@ -266,19 +268,14 @@ class FeatureBuilder:
             "last_capital": float(bool(last_source_word[:1].isupper())),
             "subordinate_marker": float(marker_hit),
             "current_clause_len": float(len(clause_words)),
-            "pred_cost_ref": float(runtime.pred_cost_ref),
-            "mt_cost_ref": float(runtime.mt_cost_ref),
-            "pred_queue_work": float(runtime.pred_queue_work),
-            "mt_queue_work": float(runtime.mt_queue_work),
             "time_since_commit": float(runtime.time_since_commit),
             "arrival_slack": float(runtime.arrival_slack),
         }
 
-        for name, value, available in zip(
-            CONFIDENCE_FEATURES, confidence.values, confidence.available
-        ):
-            values[name] = float(value) if available else 0.0
-            values[f"{name}_available"] = 1.0 if available else 0.0
+        # `confidence` is accepted for API compatibility, but the current
+        # adapters do not expose token logits and V5 deliberately excludes the
+        # always-zero confidence/mask slots from NUMERIC_FEATURES.
+        del confidence
 
         numeric = tuple(float(values[name]) for name in NUMERIC_FEATURES)
 
@@ -324,11 +321,13 @@ class HistoryTracker:
         runtime: RuntimeInfo | None = None,
         last_commit_s: float = 0.0,
         now_s: float = 0.0,
+        arrival_gap: float = 0.3,
     ) -> None:
         self.history = history if history is not None else History()
         self.runtime = runtime if runtime is not None else RuntimeInfo()
         self.last_commit_s = float(last_commit_s)
         self.now_s = float(now_s)
+        self.arrival_gap = float(arrival_gap)
 
     def clone(self) -> "HistoryTracker":
         """Return an independent copy so one transition cannot affect another."""
@@ -337,13 +336,21 @@ class HistoryTracker:
             runtime=self.runtime,
             last_commit_s=self.last_commit_s,
             now_s=self.now_s,
+            arrival_gap=self.arrival_gap,
         )
 
     # ------------------------------------------------------------------
     # Transitions
     # ------------------------------------------------------------------
     def on_read(self, now_s: float | None = None) -> History:
-        """Advance over a READ: one more observed source word, no commit."""
+        """Advance over a READ: one more observed source word, no commit.
+
+        READ advances the source clock but is not a failed write, so it
+        increments ``words_since_commit`` and leaves ``no_emit_streak``
+        unchanged. Keeping both counters in lockstep made the two features
+        duplicates and would double-count a single lag signal in the V3.1
+        dynamic READ threshold.
+        """
         if now_s is not None:
             self.now_s = float(now_s)
         previous = self.history
@@ -356,7 +363,7 @@ class HistoryTracker:
             last_commit_count=0,
             last_empty=True,
             words_since_commit=previous.words_since_commit + 1,
-            no_emit_streak=previous.no_emit_streak + 1,
+            no_emit_streak=previous.no_emit_streak,
         )
         self._refresh_runtime()
         return self.history
@@ -366,8 +373,9 @@ class HistoryTracker:
 
         The object must expose ``action``, ``emitted``, ``no_emit``,
         ``vote_top1``, ``vote_margin``, and ``vote_entropy``. A commit
-        (``emitted > 0``) resets both lag counters and the commit clock; a
-        no-emit write increments them, exactly like READ.
+        (``emitted > 0``) resets both lag counters and the commit clock. A
+        no-emit write increments both counters: it advanced the source clock
+        and was itself a failed write. READ only increments the clock counter.
         """
         if now_s is not None:
             self.now_s = float(now_s)
@@ -420,12 +428,23 @@ class HistoryTracker:
         predictor_id: int = 0,
         translator_id: int = 0,
     ) -> FeatureVector:
-        """Build the current state through the shared online `FeatureBuilder`."""
+        """Build the current state through the shared online `FeatureBuilder`.
+
+        `arrival_slack` is derived here from the virtual clock and the number
+        of *observed* source words: the next word arrives at
+        ``len(observed.split()) * arrival_gap``. No future word or full source
+        is read, so the leakage boundary is unchanged.
+        """
+        next_arrival = len(observed.split()) * self.arrival_gap
+        runtime = replace(
+            self.runtime,
+            arrival_slack=max(0.0, next_arrival - self.now_s),
+        )
         return builder.build(
             observed,
             committed,
             history=self.history,
-            runtime=self.runtime,
+            runtime=runtime,
             predictor_id=int(predictor_id),
             translator_id=int(translator_id),
         )
@@ -535,14 +554,27 @@ def feature_diagnostics(
     training but moves in serving means the served distribution is outside the
     one the network saw. The returned top-level ``warnings`` list names every
     such feature and ``constant_train_varies_serving`` collects them.
+
+    ``dead_features`` lists every feature that is zero for the whole input set
+    (``std=0`` and ``nonzero=0``); V5 treats a non-empty list as a training
+    configuration error so the old all-zero confidence/cost slots cannot
+    silently reappear.
     """
     rows = _numeric_rows(vectors)
     serving = _feature_stats(rows)
+    dead = [
+        name
+        for name in NUMERIC_FEATURES
+        if serving[name]["std"] == 0.0 and serving[name]["nonzero"] == 0
+    ]
     payload: dict = {
         "n": len(rows),
         "reference_n": 0,
         "features": serving,
-        "warnings": [],
+        "dead_features": dead,
+        "warnings": [
+            f"dead numeric feature {name!r} is always zero" for name in dead
+        ],
         "constant_train_varies_serving": [],
     }
     if reference is None:
@@ -551,7 +583,7 @@ def feature_diagnostics(
     reference_rows = _numeric_rows(reference)
     training = _feature_stats(reference_rows)
     payload["reference_n"] = len(reference_rows)
-    warnings: list[str] = []
+    warnings: list[str] = list(payload["warnings"])
     flagged: list[str] = []
     for name in NUMERIC_FEATURES:
         train = training[name]

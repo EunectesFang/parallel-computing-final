@@ -11,13 +11,19 @@ from types import SimpleNamespace
 import pytest
 
 from controller_v3 import evaluator
-from controller_v3.action import Action
+from controller_v3.action import READ, Action
 from controller_v3.config import ControllerConfig
 from controller_v3.cost_model import CostEstimate
 from controller_v3.evaluator import MetricUnavailableError, paired_bootstrap, summarize_traces
 from controller_v3.features import FeatureBuilder
 from controller_v3.post_controller import PostAction, PostDecision
-from controller_v3.rollout import RolloutTrace, run_fixed_rollout, run_rollout
+from controller_v3.rollout import (
+    RolloutTrace,
+    read_threshold,
+    run_fixed_rollout,
+    run_rollout,
+    select_guarded_action,
+)
 from controller_v3.runtime import StepResult
 
 
@@ -872,3 +878,257 @@ def test_fixed_rollout_shares_the_runtime_candidate_path():
     assert predictor.calls[0][:3] == ("a b c", 1, 6)
     assert first["pred_s"] > 0.0 and first["mt_s"] > 0.0
     assert first["new_words"] == ("x", "y")
+
+
+# ----------------------------------------------------------------------
+# V3.1 guarded selection
+# ----------------------------------------------------------------------
+def _guarded_cfg(**overrides):
+    defaults = dict(
+        actions=(Action(2, 4), Action(4, 6)),
+        read_threshold=0.0,
+        read_threshold_lag=0.0,
+        read_threshold_reads=0.0,
+        read_threshold_no_commit=0.0,
+        read_threshold_lag_ref=3.0,
+        read_threshold_lag_scale=2.2,
+        expensive_margin=0.0,
+        no_emit_veto=1.0,
+        no_emit_penalty=0.0,
+    )
+    defaults.update(overrides)
+    return ControllerConfig(**defaults)
+
+
+def test_no_emit_soft_penalty_can_flip_a_write_to_read():
+    baseline = Action(4, 6)
+    scores = {READ: 4.9, baseline: 5.0}
+    costs = {READ: 0.0, baseline: 0.8}
+
+    off = _guarded_cfg(no_emit_penalty=0.0)
+    chosen_off, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline,),
+        baseline=baseline,
+        cfg=off,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+        no_emit_risk={baseline: 0.9},
+    )
+    assert chosen_off == baseline
+
+    on = _guarded_cfg(no_emit_penalty=1.0)
+    chosen_on, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline,),
+        baseline=baseline,
+        cfg=on,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+        no_emit_risk={baseline: 0.9},
+    )
+    assert chosen_on == READ
+
+
+def test_guarded_selection_matches_plain_argmax_when_all_guards_are_off():
+    cfg = _guarded_cfg()
+    writes = (Action(2, 4), Action(4, 6))
+    scores = {
+        READ: 5.0,
+        Action(2, 4): 4.0,
+        Action(4, 6): 6.0,
+    }
+    costs = {READ: 0.0, Action(2, 4): 0.3, Action(4, 6): 0.8}
+
+    chosen, threshold, admitted = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=writes,
+        baseline=Action(4, 6),
+        cfg=cfg,
+        normalized_lag=0.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert threshold == 0.0
+    assert admitted == list(writes)
+    assert chosen == Action(4, 6)
+
+    # READ wins a tie because later actions must beat it strictly.
+    scores[READ] = 6.0
+    chosen, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=writes,
+        baseline=Action(4, 6),
+        cfg=cfg,
+        normalized_lag=0.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert chosen == READ
+
+
+def test_expensive_margin_rejects_a_near_tie_but_keeps_the_baseline():
+    cfg = _guarded_cfg(expensive_margin=0.2)
+    baseline = Action(4, 6)
+    expensive = Action(6, 10)
+    scores = {READ: 4.0, baseline: 5.0, expensive: 5.05}
+    costs = {READ: 0.0, baseline: 0.8, expensive: 1.9}
+
+    chosen, _, admitted = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline, expensive),
+        baseline=baseline,
+        cfg=cfg,
+        normalized_lag=0.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert admitted == [baseline]
+    assert chosen == baseline
+
+    # A clearly better expensive action is admitted.
+    scores[expensive] = 5.3
+    chosen, _, admitted = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline, expensive),
+        baseline=baseline,
+        cfg=cfg,
+        normalized_lag=0.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert admitted == [baseline, expensive]
+    assert chosen == expensive
+
+
+def test_expensive_margin_never_filters_cheaper_actions():
+    cfg = _guarded_cfg(expensive_margin=0.5)
+    baseline = Action(4, 6)
+    cheap = Action(2, 4)
+    scores = {READ: 4.0, baseline: 5.0, cheap: 4.9}
+    costs = {READ: 0.0, baseline: 0.8, cheap: 0.3}
+
+    chosen, _, admitted = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline, cheap),
+        baseline=baseline,
+        cfg=cfg,
+        normalized_lag=0.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert admitted == [baseline, cheap]
+    assert chosen == baseline
+
+
+def test_read_threshold_grows_with_lag_and_streaks():
+    cfg = _guarded_cfg(
+        read_threshold=0.10,
+        read_threshold_lag=0.15,
+        read_threshold_reads=0.15,
+        read_threshold_no_commit=0.10,
+    )
+    flat = read_threshold(
+        cfg,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert flat == pytest.approx(0.10)
+
+    high = read_threshold(
+        cfg,
+        normalized_lag=5.2,
+        consecutive_reads=2,
+        no_commit_streak=2,
+    )
+    assert high == pytest.approx(0.75)
+
+    # The lag term is clamped below the reference and the streak terms are
+    # capped at three, so a pathological state cannot grow unbounded.
+    capped = read_threshold(
+        cfg,
+        normalized_lag=0.0,
+        consecutive_reads=10,
+        no_commit_streak=10,
+    )
+    assert capped == pytest.approx(0.10 + 0.15 * 3 + 0.10 * 3)
+
+
+def test_higher_read_threshold_only_rejects_read():
+    baseline = Action(4, 6)
+    scores = {READ: 5.4, baseline: 5.0}
+    costs = {READ: 0.0, baseline: 0.8}
+    write_cfg = _guarded_cfg(read_threshold=0.5, expensive_margin=0.0)
+    read_cfg = _guarded_cfg(read_threshold=0.3, expensive_margin=0.0)
+
+    low, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline,),
+        baseline=baseline,
+        cfg=read_cfg,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    high, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline,),
+        baseline=baseline,
+        cfg=write_cfg,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert low == READ
+    assert high == baseline
+
+
+def test_no_emit_veto_falls_back_to_read_even_when_write_scores_higher():
+    cfg = _guarded_cfg(no_emit_veto=0.8)
+    baseline = Action(4, 6)
+    scores = {READ: 4.0, baseline: 6.0}
+    costs = {READ: 0.0, baseline: 0.8}
+    chosen, _, _ = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(baseline,),
+        baseline=baseline,
+        cfg=cfg,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+        no_emit_risk={baseline: 0.95},
+    )
+    assert chosen == READ
+
+
+def test_empty_admitted_write_set_falls_back_to_read():
+    cfg = _guarded_cfg(expensive_margin=0.2)
+    baseline = Action(4, 6)
+    expensive = Action(6, 10)
+    scores = {READ: 4.0, baseline: 0.0, expensive: 0.1}
+    costs = {READ: 0.0, baseline: 0.8, expensive: 1.9}
+    chosen, _, admitted = select_guarded_action(
+        scores=scores,
+        costs=costs,
+        candidate_writes=(expensive,),
+        baseline=baseline,
+        cfg=cfg,
+        normalized_lag=3.0,
+        consecutive_reads=0,
+        no_commit_streak=0,
+    )
+    assert admitted == []
+    assert chosen == READ

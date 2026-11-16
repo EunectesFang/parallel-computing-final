@@ -1,0 +1,15 @@
+{
+  "id": "eunectesqaq/pfba-cavc-mount-check",
+  "title": "pfba cavc mount check",
+  "code_file": "probe.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "eunectesqaq/cavc-retrain-checkpoints"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

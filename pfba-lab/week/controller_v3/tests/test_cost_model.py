@@ -251,6 +251,50 @@ def test_pipeline_predict_read_is_free():
     assert estimate.wall_s == 0.0
 
 
+def test_serial_topology_prices_the_measured_stage_sum_not_overlap():
+    pipeline = PipelineCostModel(
+        FakeCostModel(pred_s=1.0, mt_s=2.0),
+        topology="serial",
+        overhead_s=0.25,
+    )
+    action = Action(4, 6)
+
+    # A busy translation device would let prediction overlap in the pipeline
+    # model, but one shared GPU executes both stages in order.
+    serial = pipeline.marginal_wall(
+        t_pred_free=0.0,
+        t_mt_free=10.0,
+        release_s=0.0,
+        dependency_s=0.0,
+        predictor_id=0,
+        translator_id=0,
+        action=action,
+        src_words=5,
+        tgt_words=4,
+    )
+    assert serial == pytest.approx(1.0 + 2.0 + 0.25)
+
+    # The serial topology ignores device free times entirely.
+    assert pipeline.marginal_wall(
+        5.0, 5.0, 0.0, 0.0, 0, 0, action, 5, 4
+    ) == pytest.approx(3.25)
+
+    # READ remains free.
+    assert pipeline.marginal_wall(
+        0.0, 0.0, 0.0, 0.0, 0, 0, READ, 5, 4
+    ) == pytest.approx(0.0)
+
+
+def test_pipeline_topology_is_the_default_and_invalid_topology_raises():
+    default = PipelineCostModel(FakeCostModel(pred_s=1.0, mt_s=1.0))
+    assert default.topology == "pipeline"
+    assert PipelineCostModel(
+        FakeCostModel(), topology="serial"
+    ).topology == "serial"
+    with pytest.raises(ValueError, match="topology"):
+        PipelineCostModel(FakeCostModel(), topology="two-chips")
+
+
 # ----------------------------------------------------------------------
 # Runtime
 # ----------------------------------------------------------------------

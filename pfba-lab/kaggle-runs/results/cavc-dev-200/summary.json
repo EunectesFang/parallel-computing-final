@@ -1,0 +1,419 @@
+{
+  "artifacts": {
+    "checkpoint": "/kaggle/working/cavc_dev/checkpoint.pt",
+    "config": "/kaggle/working/cavc_dev/config.json",
+    "cost_records": "/kaggle/working/cavc_dev/cost_records.json",
+    "feature_stats": "/kaggle/working/cavc_dev/feature_stats.json",
+    "paired": "/kaggle/working/cavc_dev/paired.json",
+    "summary": "/kaggle/working/cavc_dev/summary.json",
+    "traces": "/kaggle/working/cavc_dev/traces.jsonl",
+    "traces_fixed": "/kaggle/working/cavc_dev/traces_fixed.jsonl"
+  },
+  "behavior": {
+    "fixed_action": "b4h6",
+    "read_prob": 0.25
+  },
+  "candidate_mode": "per_candidate",
+  "checkpoint": {
+    "cost_records": 72,
+    "feature_mean_len": 34,
+    "feature_std_len": 34,
+    "format_version": 1,
+    "git_commit": null,
+    "path": "/kaggle/working/cavc_dev/checkpoint.pt",
+    "seed": 13,
+    "status": "written"
+  },
+  "cost": {
+    "limit": 8,
+    "n_records": 72,
+    "n_sentences": 8,
+    "n_states": 8,
+    "notes": [
+      "Ids are only meaningful with calibration records measured for the same adapter pair.",
+      "READ is free and is ignored by MeasuredCostTable.",
+      "marginal_wall_s is scheduled pipeline wall time; pred_s + mt_s is serial compute, not pipeline wall time."
+    ],
+    "per_action": {
+      "b2h10": {
+        "marginal_wall_s_median": 0.7004928095000196,
+        "mt_s_median": 0.08434511149999935,
+        "n": 8,
+        "pred_s_median": 0.5972075720000021
+      },
+      "b2h4": {
+        "marginal_wall_s_median": 0.3126626840000597,
+        "mt_s_median": 0.05892292999999427,
+        "n": 8,
+        "pred_s_median": 0.24954955800001244
+      },
+      "b2h6": {
+        "marginal_wall_s_median": 0.4382074125000486,
+        "mt_s_median": 0.07005837149995386,
+        "n": 8,
+        "pred_s_median": 0.36314015950000567
+      },
+      "b4h10": {
+        "marginal_wall_s_median": 1.268728491499985,
+        "mt_s_median": 0.08881141499995238,
+        "n": 8,
+        "pred_s_median": 1.178919602000036
+      },
+      "b4h4": {
+        "marginal_wall_s_median": 0.5547192684999516,
+        "mt_s_median": 0.058058169999981146,
+        "n": 8,
+        "pred_s_median": 0.49205282399998396
+      },
+      "b4h6": {
+        "marginal_wall_s_median": 0.8016393725000057,
+        "mt_s_median": 0.07431782800006204,
+        "n": 8,
+        "pred_s_median": 0.73036826149999
+      },
+      "b6h10": {
+        "marginal_wall_s_median": 1.9168874215000642,
+        "mt_s_median": 0.09561706849996199,
+        "n": 8,
+        "pred_s_median": 1.809945464500089
+      },
+      "b6h4": {
+        "marginal_wall_s_median": 0.7856890065001494,
+        "mt_s_median": 0.061436058000026605,
+        "n": 8,
+        "pred_s_median": 0.7280053550000787
+      },
+      "b6h6": {
+        "marginal_wall_s_median": 1.1718906874999675,
+        "mt_s_median": 0.07634289850000187,
+        "n": 8,
+        "pred_s_median": 1.0904307060000065
+      }
+    },
+    "predictor_id": 0,
+    "states_per_sentence": 1,
+    "translator_id": 0
+  },
+  "excluded_buckets": [
+    0,
+    1
+  ],
+  "git_commit": null,
+  "holdout_bucket": 1,
+  "label_format": 6,
+  "label_sentences": 165,
+  "mode": "dev",
+  "model_pair": {
+    "predictor": "small",
+    "predictor_device": null,
+    "predictor_id": 0,
+    "translator": "small",
+    "translator_device": null,
+    "translator_id": 0
+  },
+  "n_label_rows": 164,
+  "n_risk_calibration_targets": 4620,
+  "n_states": 2308,
+  "n_targets": 23080,
+  "n_train_targets": 18460,
+  "newly_labeled": 165,
+  "notes": [
+    "Development run: train buckets 2-9, holdout bucket 1.",
+    "Bucket 0 and bucket 1 are historically consumed; the holdout is an internal development estimate, not a pristine test result.",
+    "Test slice starts at test:0140; no test sentence is loaded here.",
+    "The fixed (4,6) baseline runs on the same runtime/sampling path and is compared with sentence-paired bootstrap intervals.",
+    "Post controller disabled; risk heads are training-only auxiliaries and no uncalibrated sigmoid is used as a hard safety threshold."
+  ],
+  "paired": {
+    "fixed": "(4,6)",
+    "learned": "controller",
+    "metrics": {
+      "bleu": {
+        "high": 16.469626683299232,
+        "low": 2.3710381518335395,
+        "metric": "bleu",
+        "n": 17,
+        "point": 9.11788425053289,
+        "status": "ok"
+      },
+      "comet": {
+        "high": null,
+        "low": null,
+        "metric": "comet",
+        "n": 0,
+        "point": null,
+        "reason": "COMET is opt-in because loading it downloads weights",
+        "status": "skipped"
+      },
+      "completion_s": {
+        "high": 3.4031242166145446,
+        "low": -2.0965843246940024,
+        "metric": "completion_s",
+        "n": 17,
+        "point": 0.5795560372914812,
+        "status": "ok"
+      },
+      "laal": {
+        "high": 1.5819395930746758,
+        "low": 0.5286407121643476,
+        "metric": "laal",
+        "n": 17,
+        "point": 1.0299683088807583,
+        "status": "ok"
+      }
+    },
+    "n_fixed": 17,
+    "n_learned": 17
+  },
+  "post_controller": "disabled",
+  "risk_calibration": {
+    "buckets": 10,
+    "error_risk": {
+      "base_rate": 0.2587782587782588,
+      "brier": 0.18838687080776256,
+      "buckets": [
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.1,
+          "lo": 0.0,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": 0.035908117376868165,
+          "count": 1444,
+          "hi": 0.2,
+          "lo": 0.1,
+          "mean_label": 0.19667590027700832,
+          "mean_predicted": 0.16076778290014015
+        },
+        {
+          "abs_gap": 0.018811531026207,
+          "count": 1887,
+          "hi": 0.3,
+          "lo": 0.2,
+          "mean_label": 0.2670906200317965,
+          "mean_predicted": 0.2482790890055895
+        },
+        {
+          "abs_gap": 0.007862371173785021,
+          "count": 703,
+          "hi": 0.4,
+          "lo": 0.3,
+          "mean_label": 0.34281650071123754,
+          "mean_predicted": 0.3349541295374525
+        },
+        {
+          "abs_gap": 0.040229318912955336,
+          "count": 119,
+          "hi": 0.5,
+          "lo": 0.4,
+          "mean_label": 0.3949579831932773,
+          "mean_predicted": 0.43518730210623263
+        },
+        {
+          "abs_gap": 0.5063109680233879,
+          "count": 5,
+          "hi": 0.6,
+          "lo": 0.5,
+          "mean_label": 0.0,
+          "mean_predicted": 0.5063109680233879
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.7,
+          "lo": 0.6,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.8,
+          "lo": 0.7,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.9,
+          "lo": 0.8,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 1.0,
+          "lo": 0.9,
+          "mean_label": null,
+          "mean_predicted": null
+        }
+      ],
+      "ece": 0.024096866585998012,
+      "mean_predicted": 0.23820175957598308
+    },
+    "n": 4158,
+    "no_emit": {
+      "base_rate": 0.3475228475228475,
+      "brier": 0.21424219924882212,
+      "buckets": [
+        {
+          "abs_gap": 0.0026870370046470776,
+          "count": 240,
+          "hi": 0.1,
+          "lo": 0.0,
+          "mean_label": 0.0875,
+          "mean_predicted": 0.08481296299535292
+        },
+        {
+          "abs_gap": 0.0230128145848964,
+          "count": 517,
+          "hi": 0.2,
+          "lo": 0.1,
+          "mean_label": 0.1760154738878143,
+          "mean_predicted": 0.1530026593029179
+        },
+        {
+          "abs_gap": 0.00720376045022425,
+          "count": 773,
+          "hi": 0.3,
+          "lo": 0.2,
+          "mean_label": 0.25614489003880986,
+          "mean_predicted": 0.2489411295885856
+        },
+        {
+          "abs_gap": 0.01605929749683177,
+          "count": 692,
+          "hi": 0.4,
+          "lo": 0.3,
+          "mean_label": 0.3670520231213873,
+          "mean_predicted": 0.3509927256245555
+        },
+        {
+          "abs_gap": 0.030129657262969123,
+          "count": 813,
+          "hi": 0.5,
+          "lo": 0.4,
+          "mean_label": 0.4194341943419434,
+          "mean_predicted": 0.4495638516049125
+        },
+        {
+          "abs_gap": 0.08559518626973567,
+          "count": 889,
+          "hi": 0.6,
+          "lo": 0.5,
+          "mean_label": 0.46569178852643417,
+          "mean_predicted": 0.5512869747961698
+        },
+        {
+          "abs_gap": 0.07850221766642973,
+          "count": 234,
+          "hi": 0.7,
+          "lo": 0.6,
+          "mean_label": 0.5384615384615384,
+          "mean_predicted": 0.6169637561279682
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.8,
+          "lo": 0.7,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 0.9,
+          "lo": 0.8,
+          "mean_label": null,
+          "mean_predicted": null
+        },
+        {
+          "abs_gap": null,
+          "count": 0,
+          "hi": 1.0,
+          "lo": 0.9,
+          "mean_label": null,
+          "mean_predicted": null
+        }
+      ],
+      "ece": 0.035638072534841546,
+      "mean_predicted": 0.3691041356818653
+    },
+    "status": "ok",
+    "threshold_note": "Predicted probabilities come from an uncalibrated sigmoid. Use them as diagnostics or soft inputs only, never as a hard safety threshold."
+  },
+  "rollout": {
+    "action_histogram": {
+      "b2h10": 32,
+      "b2h4": 4,
+      "b4h4": 1,
+      "b4h6": 2,
+      "b6h10": 69,
+      "read": 79
+    },
+    "bleu": {
+      "score": 27.72252556019375,
+      "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1",
+      "status": "ok"
+    },
+    "comet": {
+      "reason": "COMET is opt-in because loading the model downloads weights",
+      "status": "skipped"
+    },
+    "completion_s": {
+      "mean": 9.9812868581758,
+      "p95": 20.59137253278873
+    },
+    "laal": 3.406240482121489,
+    "n": 17,
+    "read_fraction": 0.42245989304812837
+  },
+  "rollout_fixed": {
+    "action_histogram": {
+      "b4h6": 187
+    },
+    "bleu": {
+      "score": 20.39647407377827,
+      "signature": "nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.5.1",
+      "status": "ok"
+    },
+    "comet": {
+      "reason": "COMET is opt-in because loading the model downloads weights",
+      "status": "skipped"
+    },
+    "completion_s": {
+      "mean": 9.401730820884318,
+      "p95": 16.811892330411865
+    },
+    "laal": 2.376272173240731,
+    "n": 17,
+    "read_fraction": 0.0
+  },
+  "seed": 13,
+  "sentences_loaded": 200,
+  "split": "dev",
+  "stopped_for_deadline": false,
+  "stopped_reason": null,
+  "stride": 1,
+  "target_wall_s": 220.7003065459976,
+  "trained": true,
+  "training": {
+    "emit_loss": 0.7137524091771671,
+    "epochs": 20,
+    "error_loss": 0.5360239126852581,
+    "final_loss": 2.63931135542981,
+    "n_samples": 18460,
+    "no_emit_loss": 0.5961581602112039,
+    "rank_loss": 0.6679975800700002,
+    "target_calls": 20,
+    "target_seconds": 220.7003065459976,
+    "value_loss": 1.3823453282768077
+  },
+  "vocab_size": 2881
+}

@@ -1,4 +1,4 @@
-"""Tests for the 34-value online state feature contract."""
+"""Tests for the V5 online state feature contract (22 live values)."""
 
 import inspect
 import math
@@ -26,22 +26,68 @@ def as_dict(vector: FeatureVector) -> dict:
     return dict(zip(NUMERIC_FEATURES, vector.numeric))
 
 
-def test_feature_groups_form_exactly_thirty_four_unique_names():
-    assert len(SURFACE_FEATURES) == 26
+def test_feature_groups_contain_only_live_inputs():
+    assert NUMERIC_FEATURES == SURFACE_FEATURES
+    assert len(NUMERIC_FEATURES) == 22
+    assert len(set(NUMERIC_FEATURES)) == 22
+    # The optional-confidence mechanism is kept for callers but is not part of
+    # the numeric vector (the adapters do not expose logits).
     assert len(CONFIDENCE_FEATURES) == 4
     assert len(MASK_FEATURES) == 4
-    assert NUMERIC_FEATURES == SURFACE_FEATURES + CONFIDENCE_FEATURES + MASK_FEATURES
-    assert len(NUMERIC_FEATURES) == 34
-    assert len(set(NUMERIC_FEATURES)) == 34
-    assert MASK_FEATURES == tuple(f"{name}_available" for name in CONFIDENCE_FEATURES)
+    assert set(CONFIDENCE_FEATURES).isdisjoint(NUMERIC_FEATURES)
+    assert set(MASK_FEATURES).isdisjoint(NUMERIC_FEATURES)
 
 
-def test_build_returns_thirty_four_floats_in_order():
+def test_no_emit_streak_counts_failed_writes_while_reads_only_advance_lag():
+    from types import SimpleNamespace
+
+    from controller_v3.action import READ, Action
+    from controller_v3.features import HistoryTracker
+
+    def outcome(action, emitted):
+        return SimpleNamespace(
+            action=action,
+            emitted=emitted,
+            no_emit=emitted == 0,
+            vote_top1=0.5,
+            vote_margin=0.0,
+            vote_entropy=0.0,
+        )
+
+    tracker = HistoryTracker()
+    tracker.on_write(outcome(Action(4, 6), 2))
+    assert tracker.history.words_since_commit == 0
+    assert tracker.history.no_emit_streak == 0
+
+    tracker.on_write(outcome(Action(4, 6), 0))
+    assert tracker.history.words_since_commit == 1
+    assert tracker.history.no_emit_streak == 1
+
+    # A READ advances the source clock but is not a failed write; it must not
+    # inflate the failed-write streak.
+    tracker.on_read()
+    assert tracker.history.words_since_commit == 2
+    assert tracker.history.no_emit_streak == 1
+
+    tracker.on_write(outcome(Action(6, 10), 0))
+    assert tracker.history.words_since_commit == 3
+    assert tracker.history.no_emit_streak == 2
+
+    tracker.on_read()
+    assert tracker.history.words_since_commit == 4
+    assert tracker.history.no_emit_streak == 2
+
+    tracker.on_write(outcome(Action(2, 4), 1))
+    assert tracker.history.words_since_commit == 0
+    assert tracker.history.no_emit_streak == 0
+
+
+def test_build_returns_all_numeric_features_in_order():
     builder = FeatureBuilder()
     vector = builder.build("Hallo Welt.", ["Hello", "there", "friend"])
     assert isinstance(vector, FeatureVector)
     assert isinstance(vector.numeric, tuple)
-    assert len(vector.numeric) == 34
+    assert len(vector.numeric) == 22
     assert all(isinstance(value, float) for value in vector.numeric)
     # The tuple follows NUMERIC_FEATURES order.
     values = as_dict(vector)
@@ -114,38 +160,43 @@ def test_history_features_are_copied():
 
 def test_runtime_features_are_copied():
     builder = FeatureBuilder()
-    runtime = RuntimeInfo(
-        pred_cost_ref=1.25,
-        mt_cost_ref=2.5,
-        pred_queue_work=0.5,
-        mt_queue_work=1.5,
-        time_since_commit=0.75,
-        arrival_slack=0.125,
-    )
+    runtime = RuntimeInfo(time_since_commit=0.75, arrival_slack=0.125)
     values = as_dict(builder.build("a b", ["x"], runtime=runtime))
-    assert values["pred_cost_ref"] == 1.25
-    assert values["mt_cost_ref"] == 2.5
-    assert values["pred_queue_work"] == 0.5
-    assert values["mt_queue_work"] == 1.5
     assert values["time_since_commit"] == 0.75
     assert values["arrival_slack"] == 0.125
 
 
-def test_confidence_values_and_masks():
+def test_optional_confidence_is_accepted_but_not_a_numeric_input():
+    from controller_v3.features import HistoryTracker
+
     builder = FeatureBuilder()
     confidence = OptionalConfidence(
         values=(0.5, 0.25, 0.75, 0.125),
         available=(True, False, True, False),
     )
-    values = as_dict(builder.build("a b", ["x"], confidence=confidence))
-    assert [values[name] for name in CONFIDENCE_FEATURES] == [0.5, 0.0, 0.75, 0.0]
-    assert [values[name] for name in MASK_FEATURES] == [1.0, 0.0, 1.0, 0.0]
+    vector = builder.build("a b", ["x"], confidence=confidence)
+    assert len(vector.numeric) == len(NUMERIC_FEATURES)
+    values = as_dict(vector)
+    assert set(CONFIDENCE_FEATURES).isdisjoint(values)
+    assert set(MASK_FEATURES).isdisjoint(values)
 
 
-def test_confidence_defaults_are_zero_and_masked_out():
-    values = as_dict(FeatureBuilder().build("a b", ["x"]))
-    assert [values[name] for name in CONFIDENCE_FEATURES] == [0.0, 0.0, 0.0, 0.0]
-    assert [values[name] for name in MASK_FEATURES] == [0.0, 0.0, 0.0, 0.0]
+def test_history_tracker_wires_arrival_slack_from_the_virtual_clock():
+    from controller_v3.features import HistoryTracker
+
+    builder = FeatureBuilder()
+    tracker = HistoryTracker(now_s=0.0, arrival_gap=0.3)
+    # Two observed words: the next word arrives at 2 * 0.3 = 0.6 s.
+    values = as_dict(tracker.build(builder, "a b", []))
+    assert values["arrival_slack"] == pytest.approx(0.6)
+
+    tracker.set_clock(0.6)
+    values = as_dict(tracker.build(builder, "a b", []))
+    assert values["arrival_slack"] == pytest.approx(0.0)
+
+    tracker.set_clock(0.1)
+    values = as_dict(tracker.build(builder, "a", []))
+    assert values["arrival_slack"] == pytest.approx(0.2)
 
 
 def test_punctuation_features():
@@ -228,7 +279,7 @@ def test_empty_prefixes_do_not_crash():
     assert values["length_ratio"] == 0.0
     assert values["src_end_punct"] == 0.0
     assert values["tgt_end_punct"] == 0.0
-    assert len(vector.numeric) == 34
+    assert len(vector.numeric) == 22
 
 
 def test_estimate_length_ratio_uses_non_empty_pairs_and_clamps():
@@ -313,6 +364,27 @@ def test_feature_diagnostics_flags_constant_training_feature_that_moves():
         diagnostics["features"]["tgt_words"]["constant_train_varies_serving"]
         is False
     )
+
+
+def test_feature_diagnostics_flags_all_zero_features_as_dead():
+    vectors = [_vector(src_words=1), _vector(src_words=3)]
+    diagnostics = feature_diagnostics(vectors)
+
+    assert "last_B" in diagnostics["dead_features"]
+    assert any("last_B" in warning for warning in diagnostics["warnings"])
+    # A live feature is not reported as dead.
+    assert "src_words" not in diagnostics["dead_features"]
+
+
+def test_a_varied_state_set_has_no_dead_features():
+    names = list(NUMERIC_FEATURES)
+    vectors = [
+        _vector(**{name: float(index + 1) for name in names})
+        for index in range(2)
+    ]
+    diagnostics = feature_diagnostics(vectors)
+    assert diagnostics["dead_features"] == []
+    assert diagnostics["warnings"] == []
 
 
 def test_feature_diagnostics_rejects_a_wrong_width_vector():

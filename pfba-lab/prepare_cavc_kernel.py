@@ -31,7 +31,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shlex
 from pathlib import Path
+from typing import Sequence
 
 ROOT = Path(__file__).resolve().parent
 CONTROLLER_DIR = ROOT / "week" / "controller_v3"
@@ -157,18 +159,22 @@ subprocess.run(
     return script
 
 
-def build_metadata() -> dict:
+def build_metadata(
+    kernel_id: str = KERNEL_ID,
+    kernel_title: str = KERNEL_TITLE,
+    dataset_sources: Sequence[str] = (),
+) -> dict:
     """Return the private GPU/internet kernel metadata payload."""
     return {
-        "id": KERNEL_ID,
-        "title": KERNEL_TITLE,
+        "id": kernel_id,
+        "title": kernel_title,
         "code_file": "kaggle_entry.py",
         "language": "python",
         "kernel_type": "script",
         "is_private": True,
         "enable_gpu": True,
         "enable_internet": True,
-        "dataset_sources": [],
+        "dataset_sources": list(dataset_sources),
         "competition_sources": [],
         "kernel_sources": [],
     }
@@ -178,18 +184,30 @@ def write_kernel(
     output_dir: Path | str = STAGE_DIR,
     sources: dict[str, str] | None = None,
     command: tuple[str, ...] | list[str] = DEFAULT_COMMAND,
+    *,
+    kernel_id: str = KERNEL_ID,
+    kernel_title: str = KERNEL_TITLE,
+    dataset_sources: Sequence[str] = (),
 ) -> dict:
     """Write ``kaggle_entry.py`` and ``kernel-metadata.json`` under `output_dir`.
 
     Returns the stage path, both generated file paths, and every source hash.
-    No Kaggle API call is made.
+    No Kaggle API call is made. `kernel_id`/`kernel_title` let a second stage
+    (for example a 200-sentence dev run) be generated from the same verified
+    sources without hand-editing the bundle.
     """
     stage = Path(output_dir)
     stage.mkdir(parents=True, exist_ok=True)
     sources = bundle_sources() if sources is None else dict(sources)
     # Build exactly the bytes `verify_kernel` compares against; the two paths
     # must never diverge.
-    entry_text, metadata_text = expected_outputs(sources, command)
+    entry_text, metadata_text = expected_outputs(
+        sources,
+        command,
+        kernel_id=kernel_id,
+        kernel_title=kernel_title,
+        dataset_sources=dataset_sources,
+    )
     entry_path = stage / "kaggle_entry.py"
     metadata_path = stage / "kernel-metadata.json"
     # Pin LF so the committed bytes are identical on every platform and the
@@ -207,11 +225,20 @@ def write_kernel(
 def expected_outputs(
     sources: dict[str, str] | None = None,
     command: tuple[str, ...] | list[str] = DEFAULT_COMMAND,
+    *,
+    kernel_id: str = KERNEL_ID,
+    kernel_title: str = KERNEL_TITLE,
+    dataset_sources: Sequence[str] = (),
 ) -> tuple[str, str]:
     """Return the exact ``(entry_text, metadata_text)`` a regeneration writes."""
     sources = bundle_sources() if sources is None else dict(sources)
     entry = build_entry_script(sources, command)
-    metadata = json.dumps(build_metadata(), indent=2) + "\n"
+    metadata = (
+        json.dumps(
+            build_metadata(kernel_id, kernel_title, dataset_sources), indent=2
+        )
+        + "\n"
+    )
     return entry, metadata
 
 
@@ -219,6 +246,10 @@ def verify_kernel(
     output_dir: Path | str = STAGE_DIR,
     sources: dict[str, str] | None = None,
     command: tuple[str, ...] | list[str] = DEFAULT_COMMAND,
+    *,
+    kernel_id: str = KERNEL_ID,
+    kernel_title: str = KERNEL_TITLE,
+    dataset_sources: Sequence[str] = (),
 ) -> tuple[bool, list[str]]:
     """Compare the committed bundle byte-for-byte with generator output.
 
@@ -227,7 +258,13 @@ def verify_kernel(
     file is written.
     """
     stage = Path(output_dir)
-    expected_entry, expected_metadata = expected_outputs(sources, command)
+    expected_entry, expected_metadata = expected_outputs(
+        sources,
+        command,
+        kernel_id=kernel_id,
+        kernel_title=kernel_title,
+        dataset_sources=dataset_sources,
+    )
     problems: list[str] = []
     for name, expected in (
         ("kaggle_entry.py", expected_entry),
@@ -259,21 +296,63 @@ def build_parser() -> argparse.ArgumentParser:
         help="verify the committed bundle instead of regenerating it; exits 1 "
         "when kaggle_entry.py or kernel-metadata.json is stale",
     )
+    parser.add_argument(
+        "--command",
+        default=None,
+        help="quoted command arguments passed to controller_v3.kaggle inside "
+        "the kernel, e.g. \"--mode dev --limit 200 --max-hours 3 "
+        "--output-dir /kaggle/working/cavc_dev\" (default: preflight "
+        "--limit 8)",
+    )
+    parser.add_argument(
+        "--kernel-id",
+        default=KERNEL_ID,
+        help="Kaggle kernel id written to metadata (user/slug)",
+    )
+    parser.add_argument(
+        "--title",
+        default=KERNEL_TITLE,
+        help="Kaggle kernel title written to metadata",
+    )
+    parser.add_argument(
+        "--dataset-source",
+        action="append",
+        default=[],
+        help="Kaggle dataset id to attach (repeatable), e.g. "
+        "owner/cavc-retrain-checkpoints",
+    )
     return parser
 
 
 def main(argv=None) -> int:
     """Generate the kernel and print every bundled file's SHA-256."""
     args = build_parser().parse_args(argv)
+    command = (
+        DEFAULT_COMMAND
+        if args.command is None
+        else tuple(shlex.split(args.command))
+    )
     if args.check:
-        ok, problems = verify_kernel(args.output_dir)
+        ok, problems = verify_kernel(
+            args.output_dir,
+            command=command,
+            kernel_id=args.kernel_id,
+            kernel_title=args.title,
+            dataset_sources=args.dataset_source,
+        )
         if ok:
             print(f"bundle up to date: {Path(args.output_dir)}")
             return 0
         for problem in problems:
             print(f"stale bundle: {problem}")
         return 1
-    result = write_kernel(args.output_dir)
+    result = write_kernel(
+        args.output_dir,
+        command=command,
+        kernel_id=args.kernel_id,
+        kernel_title=args.title,
+        dataset_sources=args.dataset_source,
+    )
     print(f"generated: {result['entry']}")
     print(f"generated: {result['metadata']}")
     for relative, digest in result["hashes"].items():

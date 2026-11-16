@@ -627,6 +627,62 @@ def _maybe_offload_large(predictor) -> None:
         print(f"[cavc] embedding offload skipped: {exc}", flush=True)
 
 
+def _adapter_device(adapter):
+    """Best-effort device string for an adapter (``None`` when unknown)."""
+    device = getattr(adapter, "device", None)
+    return None if device is None else str(device)
+
+
+def _resolve_cost_topology(
+    predictor,
+    translator,
+    predictor_devices: tuple = (None, None),
+    *,
+    override: str | None = None,
+) -> str:
+    """Price the small pair the way it actually executes.
+
+    Two distinct CUDA devices can overlap prediction and translation, so the
+    two-device `PipelineCostModel` is correct there. One shared device (or an
+    unknown/CPU placement) runs the stages in sequence: the serial topology
+    prices ``pred_s + mt_s`` and must be used instead. Unknown devices default
+    to serial, which is the safe choice for the small single-GPU path and
+    avoids crediting overlap that cannot happen.
+    """
+    if override is not None:
+        if override not in ("serial", "pipeline"):
+            raise ValueError(
+                "cost topology override must be 'serial' or 'pipeline'"
+            )
+        return override
+
+    pdev = predictor_devices[0] if predictor_devices else None
+    tdev = predictor_devices[1] if predictor_devices else None
+    pdev = pdev if pdev is not None else _adapter_device(predictor)
+    tdev = tdev if tdev is not None else _adapter_device(translator)
+    if pdev is not None and tdev is not None and str(pdev) != str(tdev):
+        return "pipeline"
+    return "serial"
+
+
+def _cost_model_for_topology(
+    cost_model,
+    topology: str,
+    *,
+    overhead_s: float = 0.0,
+):
+    """Wrap a measured model in the topology-matched pipeline pricer."""
+    if cost_model is None:
+        return None
+    if topology not in ("serial", "pipeline"):
+        raise ValueError("topology must be 'serial' or 'pipeline'")
+    return PipelineCostModel(
+        cost_model,
+        topology=topology,
+        overhead_s=overhead_s,
+    )
+
+
 def resolve_adapters(
     predictor_name: str = "small",
     translator_name: str = "small",
@@ -1461,7 +1517,7 @@ def label_sentence(
         )
     label_actions = tuple(cfg.actions)
 
-    tracker = HistoryTracker()
+    tracker = HistoryTracker(arrival_gap=float(cfg.arrival_gap))
     committed: tuple[str, ...] = ()
     states: list[dict] = []
     # `index` indexes the (possibly truncated) positions, so this is the true
@@ -1671,7 +1727,9 @@ def _components(cfg: ControllerConfig, sentences: Sequence):
     return builder, network, vocab
 
 
-def _tracker_from_row(state_row: dict) -> HistoryTracker:
+def _tracker_from_row(
+    state_row: dict, *, arrival_gap: float = 0.3
+) -> HistoryTracker:
     """Rebuild the pre-action tracker stored in one `states` entry."""
     history = History(**dict(state_row.get("history") or {}))
     runtime = RuntimeInfo(**dict(state_row.get("runtime") or {}))
@@ -1680,6 +1738,7 @@ def _tracker_from_row(state_row: dict) -> HistoryTracker:
         runtime,
         last_commit_s=float(state_row.get("last_commit_s", 0.0)),
         now_s=float(state_row.get("now_s", 0.0)),
+        arrival_gap=float(arrival_gap),
     )
 
 
@@ -1712,7 +1771,9 @@ def _targets_from_rows(
         for state_row in row.get("states") or []:
             if remaining is not None and remaining <= 0:
                 break
-            tracker = _tracker_from_row(state_row)
+            tracker = _tracker_from_row(
+                state_row, arrival_gap=float(cfg.arrival_gap)
+            )
             observed = str(state_row.get("observed", ""))
             committed = tuple(state_row.get("committed_before") or ())
             state = tracker.build(
@@ -1740,6 +1801,13 @@ def _targets_from_rows(
 
             if terminal:
                 records = state_row.get("outcomes") or []
+                wall_targets = [
+                    advance_virtual_clock(
+                        pre_now_s, read_pos, cfg.arrival_gap, _step_seconds(outcome)
+                    )
+                    - pre_now_s
+                    for outcome in outcomes
+                ]
                 # LABEL_FORMAT 6 stores one terminal value per outcome, each
                 # evaluated on that action's own committed prefix. Older rows
                 # (same format but no per-outcome value) fall back to the
@@ -1767,12 +1835,14 @@ def _targets_from_rows(
                         terminal_value=terminal_value,
                         terminal_values=terminal_values,
                         src_words_after=src_words_after,
+                        wall_targets=wall_targets,
                         state_key=key,
                         rho=builder.rho,
                     )
                 )
             else:
                 next_states = []
+                wall_targets = []
                 for outcome in outcomes:
                     # Per-action successor clock: pipeline marginal when the
                     # labels were priced, serial compute only as the documented
@@ -1781,6 +1851,7 @@ def _targets_from_rows(
                     next_now_s = advance_virtual_clock(
                         pre_now_s, read_pos, cfg.arrival_gap, spent
                     )
+                    wall_targets.append(next_now_s - pre_now_s)
                     next_states.append(
                         _advance_tracker(
                             tracker, outcome, next_now_s
@@ -1799,6 +1870,7 @@ def _targets_from_rows(
                         cfg,
                         next_states=next_states,
                         src_words_after=src_words_after,
+                        wall_targets=wall_targets,
                         state_key=key,
                         rho=builder.rho,
                     )
@@ -1894,21 +1966,44 @@ class _RecordingBuilder:
 
 
 def _split_calibration_targets(targets: Sequence, every: int = 5):
-    """Deterministically hold out whole state groups for risk calibration.
+    """Deterministically hold out whole sentences for risk calibration.
 
-    Targets are grouped by `state_key` so a ranking group is never split across
-    training and calibration. `every` selects sorted state keys ``0, every,
-    2*every, ...``. When fewer than two groups exist, nothing is held out and
-    the caller reports calibration as unavailable rather than in-sample.
+    Targets are grouped by the sentence prefix of ``state_key`` (everything
+    before the final colon; sentence ids such as ``dev:0000`` contain a colon
+    themselves), so a sentence's states never straddle the train/calibration
+    boundary. Grouping by ``state_key`` alone kept ranking groups intact but
+    still let other states of the same sentence train the encoder that is
+    calibrated on its siblings; the sentence is the leakage unit. `every`
+    selects sorted sentences ``0, every, 2*every, ...``. When fewer than two
+    sentences exist, nothing is held out and the caller reports calibration as
+    unavailable rather than in-sample.
     """
     materialized = list(targets)
-    keys = sorted({str(target.state_key) for target in materialized})
-    if len(keys) < 2:
+    every = int(every)
+    if every < 1:
+        raise ValueError("every must be a positive integer")
+    sentences = sorted(
+        {
+            str(target.state_key).rsplit(":", 1)[0]
+            for target in materialized
+        }
+    )
+    if len(sentences) < 2:
         return materialized, []
-    holdout = set(keys[:: int(every)])
-    train = [target for target in materialized if target.state_key not in holdout]
+    holdout_sentences = set(sentences[::every])
+
+    def sentence_of(target) -> str:
+        return str(target.state_key).rsplit(":", 1)[0]
+
+    train = [
+        target
+        for target in materialized
+        if sentence_of(target) not in holdout_sentences
+    ]
     held_out = [
-        target for target in materialized if target.state_key in holdout
+        target
+        for target in materialized
+        if sentence_of(target) in holdout_sentences
     ]
     if not train or not held_out:
         return materialized, []
@@ -2123,6 +2218,7 @@ def _train_and_write(
     calibrate_risk: bool = False,
     evaluate_fixed: bool = False,
     include_comet: bool = False,
+    cost_topology: str = "pipeline",
 ) -> dict:
     """Train, checkpoint, roll out, and write every artifact for a mode.
 
@@ -2159,9 +2255,7 @@ def _train_and_write(
     # Training and rollout must price the Bellman backup the same way: the
     # pipeline model exposes marginal wall time, with serial compute only as a
     # documented fallback inside the trainer.
-    pipeline_cost = (
-        PipelineCostModel(cost_model) if cost_model is not None else None
-    )
+    pipeline_cost = _cost_model_for_topology(cost_model, cost_topology)
 
     trained = False
     if deadline is not None and time.perf_counter() >= deadline:
@@ -2196,6 +2290,7 @@ def _train_and_write(
         # against the resolved runtime instead of trusting a silent fallback.
         "model_pair": dict(model_pair),
         "feature_stats": training_feature_stats,
+        "cost_topology": cost_topology,
         "candidate_mode": candidate_mode,
         "post_controller": (
             "enabled" if post_controller_enabled else "disabled"
@@ -2377,6 +2472,7 @@ def _train_and_write(
         # per-state backup cache), mirrored at the top level for dashboards.
         "target_wall_s": float(training.get("target_seconds", 0.0)),
         "trained": trained,
+        "cost_topology": cost_topology,
         "candidate_mode": candidate_mode,
         "post_controller": (
             "enabled" if post_controller_enabled else "disabled"
@@ -2531,6 +2627,9 @@ def run_preflight(
     tid = _pair_id(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
+    cost_topology = _resolve_cost_topology(
+        predictor, translator, predictor_devices
+    )
     builder, network, vocab = _components(cfg, sentences)
     labeler = CounterfactualLabeler(
         predictor,
@@ -2564,7 +2663,7 @@ def run_preflight(
         pid,
         tid,
         read_prob=read_prob,
-        cost_model=PipelineCostModel(cost_model),
+        cost_model=_cost_model_for_topology(cost_model, cost_topology),
     )
     if not targets:
         raise RuntimeError(
@@ -2623,6 +2722,7 @@ def run_preflight(
         notes=notes,
         post_controller_enabled=bool(post_controller),
         candidate_mode=labeler.candidate_mode,
+        cost_topology=cost_topology,
         extra_summary={
             "preflight": True,
             "label_format": LABEL_FORMAT,
@@ -2727,6 +2827,9 @@ def run_dev(
     tid = _pair_id(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
+    cost_topology = _resolve_cost_topology(
+        predictor, translator, predictor_devices
+    )
     # Train-only vocabulary: holdout bucket 1 must not contribute entries, or
     # its words would leak into the frozen text encoder.
     builder, network, vocab = _components(cfg, train_sentences)
@@ -2817,7 +2920,7 @@ def run_dev(
             timer=timer,
         )
     cost_model = MeasuredCostTable(cost_records)
-    label_cost = PipelineCostModel(cost_model)
+    label_cost = _cost_model_for_topology(cost_model, cost_topology)
 
     newly_labeled = 0
     stopped_for_deadline = False
@@ -2997,6 +3100,7 @@ def run_dev(
         initial_stopped_reason=stopped_reason,
         post_controller_enabled=bool(post_controller),
         candidate_mode=labeler.candidate_mode,
+        cost_topology=cost_topology,
         calibrate_risk=True,
         evaluate_fixed=True,
         include_comet=include_comet,
@@ -3127,6 +3231,9 @@ def run_confirm(
     tid = _pair_id(
         translator_id, translator, ("model_pair_id", "translator_id")
     )
+    cost_topology = _resolve_cost_topology(
+        predictor, translator, predictor_devices
+    )
     model_pair = {
         # Compare the checkpoint against the adapters that actually loaded, not
         # the caller-declared aliases.
@@ -3234,7 +3341,7 @@ def run_confirm(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     post = PostController() if post_controller else None
-    pipeline_cost = PipelineCostModel(cost_model)
+    pipeline_cost = _cost_model_for_topology(cost_model, cost_topology)
     traces = [
         run_rollout(
             sentence,
@@ -3326,6 +3433,7 @@ def run_confirm(
         "trained": checkpoint_trained,
         "frozen_config": True,
         "seed": int(cfg.seed),
+        "cost_topology": cost_topology,
         "post_controller": "enabled" if post_controller else "disabled",
         "risk_calibration": risk_payload,
         # Explicit provenance: only a trained checkpoint with dev-keyed targets
@@ -3426,8 +3534,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("preflight", "dev", "confirm", "dry-run"),
+        choices=("preflight", "dev", "confirm", "evaluate", "dry-run"),
         required=True,
+    )
+    parser.add_argument(
+        "--old-checkpoint",
+        default=None,
+        help="evaluate mode: original checkpoint used for variants A/B",
+    )
+    parser.add_argument(
+        "--skip-fixed",
+        action="store_true",
+        help="evaluate mode: do not run the fixed (4,6) baseline (for reuse "
+        "of traces measured in another run)",
+    )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="evaluate mode: do not run the --old-checkpoint policy",
+    )
+    parser.add_argument(
+        "--retrained",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="evaluate mode: retrained checkpoint for variants C/D; repeatable",
     )
     parser.add_argument(
         "--predictor", choices=("small", "large"), default="small"
@@ -3613,6 +3744,35 @@ def main(argv=None) -> int:
             post_controller=bool(args.post_controller),
             candidate_mode=str(args.candidate_mode),
             include_comet=bool(args.comet),
+        )
+    elif args.mode == "evaluate":
+        from .evaluate import run_evaluation
+
+        if not args.old_checkpoint:
+            raise ValueError(
+                "evaluate mode needs --old-checkpoint for variants A/B"
+            )
+        retrained: dict[str, str] = {}
+        for item in args.retrained or []:
+            if "=" not in item:
+                raise ValueError(
+                    f"--retrained must be NAME=PATH, got {item!r}"
+                )
+            name, path = item.split("=", 1)
+            retrained[str(name)] = str(path)
+        limit = 60 if args.limit is None else int(args.limit)
+        run_evaluation(
+            old_checkpoint=args.old_checkpoint,
+            retrained=retrained,
+            offset=int(args.offset),
+            limit=limit,
+            output_dir=args.output_dir,
+            include_comet=bool(args.comet),
+            predictor_name=args.predictor,
+            translator_name=args.translator,
+            local_files_only=args.local_files_only,
+            include_fixed=not bool(args.skip_fixed),
+            include_baseline=not bool(args.skip_baseline),
         )
     elif args.mode == "confirm":
         limit = DEFAULT_CONFIRM_LIMIT if args.limit is None else args.limit

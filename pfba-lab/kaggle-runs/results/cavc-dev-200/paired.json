@@ -1,0 +1,41 @@
+{
+  "fixed": "(4,6)",
+  "learned": "controller",
+  "metrics": {
+    "bleu": {
+      "high": 16.469626683299232,
+      "low": 2.3710381518335395,
+      "metric": "bleu",
+      "n": 17,
+      "point": 9.11788425053289,
+      "status": "ok"
+    },
+    "comet": {
+      "high": null,
+      "low": null,
+      "metric": "comet",
+      "n": 0,
+      "point": null,
+      "reason": "COMET is opt-in because loading it downloads weights",
+      "status": "skipped"
+    },
+    "completion_s": {
+      "high": 3.4031242166145446,
+      "low": -2.0965843246940024,
+      "metric": "completion_s",
+      "n": 17,
+      "point": 0.5795560372914812,
+      "status": "ok"
+    },
+    "laal": {
+      "high": 1.5819395930746758,
+      "low": 0.5286407121643476,
+      "metric": "laal",
+      "n": 17,
+      "point": 1.0299683088807583,
+      "status": "ok"
+    }
+  },
+  "n_fixed": 17,
+  "n_learned": 17
+}

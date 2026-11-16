@@ -1,0 +1,108 @@
+{
+  "config": {
+    "actions": [
+      [
+        2,
+        4
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        2,
+        10
+      ],
+      [
+        4,
+        4
+      ],
+      [
+        4,
+        6
+      ],
+      [
+        4,
+        10
+      ],
+      [
+        6,
+        4
+      ],
+      [
+        6,
+        6
+      ],
+      [
+        6,
+        10
+      ]
+    ],
+    "advantage_baseline": [
+      4,
+      6
+    ],
+    "alpha_emit": 0.0,
+    "alpha_error": 0.2,
+    "alpha_noemit": 0.2,
+    "alpha_q": 1.0,
+    "alpha_rank": 0.1,
+    "arrival_gap": 0.3,
+    "batch_size": 128,
+    "beta_lag": 0.25,
+    "beta_wall": 0.3,
+    "convex_kappa": 0.5,
+    "double_dqn": true,
+    "dropout": 0.1,
+    "epochs": 30,
+    "expensive_margin": 0.0,
+    "feature_normalize": true,
+    "gamma": 0.99,
+    "gamma_delay": 1.0,
+    "gamma_wall": 1.0,
+    "huber_delta": 1.0,
+    "lag_anchor": 3.0,
+    "lambda_l": 0.05,
+    "lambda_t": 0.1,
+    "lr": 0.0003,
+    "max_branches": 10,
+    "max_horizon": 10,
+    "min_start": 3,
+    "model_emb": 8,
+    "no_emit_penalty": 0.0,
+    "no_emit_veto": 1.0,
+    "normalize_value_loss": true,
+    "numeric_dim": 22,
+    "pair_weight": 0.25,
+    "ralcp_threshold": 0.6,
+    "rank_epsilon": 0.05,
+    "read_threshold": 0.0,
+    "read_threshold_lag": 0.0,
+    "read_threshold_lag_ref": 3.0,
+    "read_threshold_lag_scale": 2.2,
+    "read_threshold_no_commit": 0.0,
+    "read_threshold_reads": 0.0,
+    "seed": 13,
+    "target_tau": 0.01,
+    "target_update_every": 1,
+    "terminal_eos_wall_s": 1.0,
+    "text_emb": 32,
+    "text_hidden": 32,
+    "text_window_src": 16,
+    "text_window_tgt": 16,
+    "tri_rank_epsilon": 0.1,
+    "tri_value": true,
+    "value_hidden": 64,
+    "weight_e": 3.0,
+    "weight_m": 1.0
+  },
+  "model_pair": {
+    "predictor": "small",
+    "predictor_device": null,
+    "predictor_id": 0,
+    "translator": "small",
+    "translator_device": null,
+    "translator_id": 0
+  },
+  "notes": []
+}

@@ -380,14 +380,34 @@ class PipelineCostModel:
     finish time minus the moment both devices were free, so work that overlaps
     with an already-busy device is not charged twice.
 
+    With ``topology="serial"`` the predictor and translator share one device,
+    as in a single-GPU Kaggle session: the two measured stages run in sequence
+    and the marginal is ``pred_s + mt_s + overhead_s``. Device free times are
+    ignored in that mode because they cannot create real overlap. The default
+    remains ``"pipeline"`` for genuinely independent devices.
+
     `arrival_gap` is retained for callers that derive ``release_s`` and
     ``dependency_s`` from a fixed source cadence; `marginal_wall` takes those
     two times explicitly.
     """
 
-    def __init__(self, base: CostModel, arrival_gap: float = 0.3) -> None:
+    def __init__(
+        self,
+        base: CostModel,
+        arrival_gap: float = 0.3,
+        *,
+        topology: str = "pipeline",
+        overhead_s: float = 0.0,
+    ) -> None:
+        if topology not in ("pipeline", "serial"):
+            raise ValueError(
+                "topology must be 'pipeline' (two independent devices) or "
+                "'serial' (predictor and translator share one device)"
+            )
         self.base = base
         self.arrival_gap = float(arrival_gap)
+        self.topology = topology
+        self.overhead_s = max(0.0, float(overhead_s))
 
     def predict(
         self,
@@ -420,6 +440,15 @@ class PipelineCostModel:
         )
         pred_s = float(estimate.pred_s)
         mt_s = float(estimate.mt_s)
+
+        if action.is_read:
+            return 0.0
+        if self.topology == "serial":
+            # One device runs prediction and translation in sequence; a free
+            # translation clock cannot create overlap, and release/dependency
+            # waits are already represented by the measured stage durations in
+            # this single-device approximation.
+            return max(0.0, pred_s + mt_s + self.overhead_s)
 
         pred_start = max(float(t_pred_free), float(release_s))
         pred_end = pred_start + pred_s

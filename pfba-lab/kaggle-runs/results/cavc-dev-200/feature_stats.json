@@ -1,0 +1,598 @@
+{
+  "candidate_mode": "per_candidate",
+  "n_serving_vectors": 187,
+  "serving": {
+    "constant_train_varies_serving": [],
+    "features": {
+      "arrival_slack": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "current_clause_len": {
+        "constant_train_varies_serving": false,
+        "mean": 4.9411764705882355,
+        "mean_diff": -0.41800897135283943,
+        "missing": 0,
+        "nonzero": 171,
+        "serve_mean": 4.9411764705882355,
+        "std": 3.5270937129267237,
+        "train_mean": 5.359185441941075,
+        "train_std": 3.9321165307018258
+      },
+      "last_B": {
+        "constant_train_varies_serving": false,
+        "mean": 2.5026737967914436,
+        "mean_diff": -0.26162429679607824,
+        "missing": 0,
+        "nonzero": 99,
+        "serve_mean": 2.5026737967914436,
+        "std": 2.709409888097371,
+        "train_mean": 2.764298093587522,
+        "train_std": 1.8482014024825542
+      },
+      "last_H": {
+        "constant_train_varies_serving": false,
+        "mean": 5.122994652406417,
+        "mean_diff": 0.9765475120251343,
+        "missing": 0,
+        "nonzero": 99,
+        "serve_mean": 5.122994652406417,
+        "std": 4.920855498746493,
+        "train_mean": 4.146447140381283,
+        "train_std": 2.772302103723831
+      },
+      "last_capital": {
+        "constant_train_varies_serving": false,
+        "mean": 0.3422459893048128,
+        "mean_diff": 0.04415240178314905,
+        "missing": 0,
+        "nonzero": 64,
+        "serve_mean": 0.3422459893048128,
+        "std": 0.47446145481965424,
+        "train_mean": 0.29809358752166376,
+        "train_std": 0.45742081347499697
+      },
+      "last_commit_count": {
+        "constant_train_varies_serving": false,
+        "mean": 0.946524064171123,
+        "mean_diff": -0.11933382144412841,
+        "missing": 0,
+        "nonzero": 73,
+        "serve_mean": 0.946524064171123,
+        "std": 1.6921733022108087,
+        "train_mean": 1.0658578856152514,
+        "train_std": 1.625456821722303
+      },
+      "last_empty": {
+        "constant_train_varies_serving": false,
+        "mean": 0.5187165775401069,
+        "mean_diff": 0.04557966246211731,
+        "missing": 0,
+        "nonzero": 97,
+        "serve_mean": 0.5187165775401069,
+        "std": 0.4996495669218429,
+        "train_mean": 0.4731369150779896,
+        "train_std": 0.4992778531724323
+      },
+      "last_vote_entropy": {
+        "constant_train_varies_serving": false,
+        "mean": 1.098686576260386,
+        "mean_diff": 0.04528707569791934,
+        "missing": 0,
+        "nonzero": 167,
+        "serve_mean": 1.098686576260386,
+        "std": 0.5354240477877267,
+        "train_mean": 1.0533995005624666,
+        "train_std": 0.4243459110509883
+      },
+      "last_vote_margin": {
+        "constant_train_varies_serving": false,
+        "mean": 0.08467023172905526,
+        "mean_diff": -0.025165123556906616,
+        "missing": 0,
+        "nonzero": 76,
+        "serve_mean": 0.08467023172905526,
+        "std": 0.11219331202168119,
+        "train_mean": 0.10983535528596187,
+        "train_std": 0.16769765419172555
+      },
+      "last_vote_top1": {
+        "constant_train_varies_serving": false,
+        "mean": 0.3484848484848485,
+        "mean_diff": -0.0036598655532797397,
+        "missing": 0,
+        "nonzero": 167,
+        "serve_mean": 0.3484848484848485,
+        "std": 0.1725583187193856,
+        "train_mean": 0.35214471403812825,
+        "train_std": 0.1823349942140552
+      },
+      "length_ratio": {
+        "constant_train_varies_serving": false,
+        "mean": 0.60668688529598,
+        "mean_diff": -0.1551374040398419,
+        "missing": 0,
+        "nonzero": 164,
+        "serve_mean": 0.60668688529598,
+        "std": 0.33409646321865355,
+        "train_mean": 0.7618242893358219,
+        "train_std": 0.35346444244731257
+      },
+      "mt_cost_ref": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_next_entropy": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_next_entropy_available": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_next_max_prob": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_next_max_prob_available": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_prefix_logprob": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_prefix_logprob_available": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "mt_queue_work": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "no_emit_streak": {
+        "constant_train_varies_serving": false,
+        "mean": 1.5508021390374331,
+        "mean_diff": 0.5772319483961853,
+        "missing": 0,
+        "nonzero": 97,
+        "serve_mean": 1.5508021390374331,
+        "std": 2.499483775236243,
+        "train_mean": 0.9735701906412478,
+        "train_std": 1.4471312357664086
+      },
+      "normalized_lag": {
+        "constant_train_varies_serving": false,
+        "mean": 4.216057271029903,
+        "mean_diff": 0.8200126060976536,
+        "missing": 0,
+        "nonzero": 184,
+        "serve_mean": 4.216057271029903,
+        "std": 2.7182535325365147,
+        "train_mean": 3.396044664932249,
+        "train_std": 2.224262725546066
+      },
+      "pred_cost_ref": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "pred_next_entropy": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "pred_next_entropy_available": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "pred_queue_work": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0,
+        "mean_diff": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "serve_mean": 0.0,
+        "std": 0.0,
+        "train_mean": 0.0,
+        "train_std": 0.0
+      },
+      "src_chars": {
+        "constant_train_varies_serving": false,
+        "mean": 67.58823529411765,
+        "mean_diff": -17.283515139157913,
+        "missing": 0,
+        "nonzero": 187,
+        "serve_mean": 67.58823529411765,
+        "std": 40.236951524796304,
+        "train_mean": 84.87175043327557,
+        "train_std": 56.90111233515192
+      },
+      "src_end_punct": {
+        "constant_train_varies_serving": false,
+        "mean": 0.0855614973262032,
+        "mean_diff": 0.0006394869275896803,
+        "missing": 0,
+        "nonzero": 16,
+        "serve_mean": 0.0855614973262032,
+        "std": 0.279715440227209,
+        "train_mean": 0.08492201039861352,
+        "train_std": 0.27876560503130815
+      },
+      "src_words": {
+        "constant_train_varies_serving": false,
+        "mean": 9.716577540106952,
+        "mean_diff": -2.5446876245377616,
+        "missing": 0,
+        "nonzero": 187,
+        "serve_mean": 9.716577540106952,
+        "std": 5.257019045936121,
+        "train_mean": 12.261265164644714,
+        "train_std": 7.763941926619043
+      },
+      "subordinate_marker": {
+        "constant_train_varies_serving": false,
+        "mean": 0.11764705882352941,
+        "mean_diff": 0.03749107962075644,
+        "missing": 0,
+        "nonzero": 22,
+        "serve_mean": 0.11764705882352941,
+        "std": 0.32218973970892123,
+        "train_mean": 0.08015597920277297,
+        "train_std": 0.2715345248781775
+      },
+      "tgt_chars": {
+        "constant_train_varies_serving": false,
+        "mean": 39.50267379679144,
+        "mean_diff": -21.786321003901797,
+        "missing": 0,
+        "nonzero": 164,
+        "serve_mean": 39.50267379679144,
+        "std": 33.195156906522854,
+        "train_mean": 61.28899480069324,
+        "train_std": 51.16104420237064
+      },
+      "tgt_end_punct": {
+        "constant_train_varies_serving": false,
+        "mean": 0.11764705882352941,
+        "mean_diff": 0.01972678152716892,
+        "missing": 0,
+        "nonzero": 22,
+        "serve_mean": 0.11764705882352941,
+        "std": 0.32218973970892123,
+        "train_mean": 0.09792027729636049,
+        "train_std": 0.29720682460294273
+      },
+      "tgt_words": {
+        "constant_train_varies_serving": false,
+        "mean": 6.657754010695188,
+        "mean_diff": -4.078381171280549,
+        "missing": 0,
+        "nonzero": 164,
+        "serve_mean": 6.657754010695188,
+        "std": 5.315750110154437,
+        "train_mean": 10.736135181975737,
+        "train_std": 8.716463494048355
+      },
+      "time_since_commit": {
+        "constant_train_varies_serving": false,
+        "mean": 0.4616392091388987,
+        "mean_diff": 0.0077255698065492595,
+        "missing": 0,
+        "nonzero": 37,
+        "serve_mean": 0.4616392091388987,
+        "std": 1.3256034709266735,
+        "train_mean": 0.45391363933234946,
+        "train_std": 0.8266776144670038
+      },
+      "words_since_commit": {
+        "constant_train_varies_serving": false,
+        "mean": 1.5508021390374331,
+        "mean_diff": 0.5772319483961853,
+        "missing": 0,
+        "nonzero": 97,
+        "serve_mean": 1.5508021390374331,
+        "std": 2.499483775236243,
+        "train_mean": 0.9735701906412478,
+        "train_std": 1.4471312357664086
+      }
+    },
+    "n": 187,
+    "reference_n": 2308,
+    "warnings": []
+  },
+  "training": {
+    "constant_train_varies_serving": [],
+    "features": {
+      "arrival_slack": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "current_clause_len": {
+        "mean": 5.359185441941075,
+        "missing": 0,
+        "nonzero": 2121,
+        "std": 3.9321165307018258
+      },
+      "last_B": {
+        "mean": 2.764298093587522,
+        "missing": 0,
+        "nonzero": 1595,
+        "std": 1.8482014024825542
+      },
+      "last_H": {
+        "mean": 4.146447140381283,
+        "missing": 0,
+        "nonzero": 1595,
+        "std": 2.772302103723831
+      },
+      "last_capital": {
+        "mean": 0.29809358752166376,
+        "missing": 0,
+        "nonzero": 688,
+        "std": 0.45742081347499697
+      },
+      "last_commit_count": {
+        "mean": 1.0658578856152514,
+        "missing": 0,
+        "nonzero": 1052,
+        "std": 1.625456821722303
+      },
+      "last_empty": {
+        "mean": 0.4731369150779896,
+        "missing": 0,
+        "nonzero": 1092,
+        "std": 0.4992778531724323
+      },
+      "last_vote_entropy": {
+        "mean": 1.0533995005624666,
+        "missing": 0,
+        "nonzero": 2060,
+        "std": 0.4243459110509883
+      },
+      "last_vote_margin": {
+        "mean": 0.10983535528596187,
+        "missing": 0,
+        "nonzero": 890,
+        "std": 0.16769765419172555
+      },
+      "last_vote_top1": {
+        "mean": 0.35214471403812825,
+        "missing": 0,
+        "nonzero": 2097,
+        "std": 0.1823349942140552
+      },
+      "length_ratio": {
+        "mean": 0.7618242893358219,
+        "missing": 0,
+        "nonzero": 2058,
+        "std": 0.35346444244731257
+      },
+      "mt_cost_ref": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_next_entropy": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_next_entropy_available": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_next_max_prob": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_next_max_prob_available": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_prefix_logprob": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_prefix_logprob_available": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "mt_queue_work": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "no_emit_streak": {
+        "mean": 0.9735701906412478,
+        "missing": 0,
+        "nonzero": 1092,
+        "std": 1.4471312357664086
+      },
+      "normalized_lag": {
+        "mean": 3.396044664932249,
+        "missing": 0,
+        "nonzero": 2240,
+        "std": 2.224262725546066
+      },
+      "pred_cost_ref": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "pred_next_entropy": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "pred_next_entropy_available": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "pred_queue_work": {
+        "mean": 0.0,
+        "missing": 0,
+        "nonzero": 0,
+        "std": 0.0
+      },
+      "src_chars": {
+        "mean": 84.87175043327557,
+        "missing": 0,
+        "nonzero": 2308,
+        "std": 56.90111233515192
+      },
+      "src_end_punct": {
+        "mean": 0.08492201039861352,
+        "missing": 0,
+        "nonzero": 196,
+        "std": 0.27876560503130815
+      },
+      "src_words": {
+        "mean": 12.261265164644714,
+        "missing": 0,
+        "nonzero": 2308,
+        "std": 7.763941926619043
+      },
+      "subordinate_marker": {
+        "mean": 0.08015597920277297,
+        "missing": 0,
+        "nonzero": 185,
+        "std": 0.2715345248781775
+      },
+      "tgt_chars": {
+        "mean": 61.28899480069324,
+        "missing": 0,
+        "nonzero": 2058,
+        "std": 51.16104420237064
+      },
+      "tgt_end_punct": {
+        "mean": 0.09792027729636049,
+        "missing": 0,
+        "nonzero": 226,
+        "std": 0.29720682460294273
+      },
+      "tgt_words": {
+        "mean": 10.736135181975737,
+        "missing": 0,
+        "nonzero": 2058,
+        "std": 8.716463494048355
+      },
+      "time_since_commit": {
+        "mean": 0.45391363933234946,
+        "missing": 0,
+        "nonzero": 770,
+        "std": 0.8266776144670038
+      },
+      "words_since_commit": {
+        "mean": 0.9735701906412478,
+        "missing": 0,
+        "nonzero": 1092,
+        "std": 1.4471312357664086
+      }
+    },
+    "n": 2308,
+    "reference_n": 0,
+    "warnings": []
+  }
+}

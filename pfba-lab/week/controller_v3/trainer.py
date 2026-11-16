@@ -13,6 +13,7 @@ False. READ and write actions share the same Q scale.
 from __future__ import annotations
 
 import copy
+import math
 import random
 import time
 import warnings
@@ -62,6 +63,11 @@ class ActionTarget:
     next_state: StateInput | None = None
     next_actions: tuple[Action, ...] = ()
     terminal: bool = False
+    # CAVC-Q V4 three-component targets. ``None`` in V3 mode; the trainer uses
+    # ``value_target`` (immediate reward) exactly as before.
+    quality_target: float | None = None
+    delay_target: float | None = None
+    wall_target: float | None = None
 
 
 @dataclass
@@ -218,6 +224,139 @@ class CAVCTrainer:
                 results.append(float(target.value_target) + self.cfg.gamma * bonus)
         return results
 
+    def compute_component_targets(
+        self, targets: Sequence[ActionTarget]
+    ) -> list[tuple[float, float, float]]:
+        """Double-DQN targets for the three V4 value components.
+
+        The online network selects the next action by
+        ``U = Qq - beta_lag*Ql - beta_wall*Qw``; the frozen target network
+        evaluates that same action. Each component bootstraps independently,
+        and no ``lambda_t * C`` term is subtracted (the wall head already
+        carries time, so subtracting it again would double count).
+        """
+        self.target_network.eval()
+        was_training = self.network.training
+        # Double DQN selection must be deterministic: dropout would turn the
+        # online argmax into noise.
+        self.network.eval()
+        results: list[tuple[float, float, float]] = []
+
+        unique_states: list[StateInput] = []
+        state_index: dict[StateInput, int] = {}
+        for target in targets:
+            if target.next_state is None or target.terminal:
+                continue
+            state = target.next_state
+            if state not in state_index:
+                state_index[state] = len(unique_states)
+                unique_states.append(state)
+
+        with torch.no_grad():
+            online_encoded = (
+                self._encode_states(self.network, unique_states)
+                if unique_states
+                else None
+            )
+            target_encoded = (
+                self._encode_states(self.target_network, unique_states)
+                if unique_states
+                else None
+            )
+            cache: dict[tuple[StateInput, tuple[Action, ...]], tuple[float, float, float]] = {}
+            for target in targets:
+                immediate = (
+                    float(target.quality_target)
+                    if target.quality_target is not None
+                    else float(target.value_target),
+                    float(target.delay_target or 0.0),
+                    float(target.wall_target or 0.0),
+                )
+                if target.next_state is None or target.terminal:
+                    results.append(immediate)
+                    continue
+                actions = tuple(target.next_actions) or (READ, *self.cfg.actions)
+                lookup = (target.next_state, actions)
+                bonus = cache.get(lookup)
+                if bonus is None:
+                    row = state_index[target.next_state]
+                    bonus = self._best_next_components_from_z(
+                        online_encoded[row : row + 1],
+                        target_encoded[row : row + 1],
+                        actions,
+                    )
+                    cache[lookup] = bonus
+                results.append(
+                    (
+                        immediate[0] + self.cfg.gamma * bonus[0],
+                        immediate[1] + self.cfg.gamma_delay * bonus[1],
+                        immediate[2] + self.cfg.gamma_wall * bonus[2],
+                    )
+                )
+        if was_training:
+            self.network.train()
+        return results
+
+    def _component_values(
+        self,
+        model: CAVCNetwork,
+        z: torch.Tensor,
+        actions: Sequence[Action],
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+        """Per-action `(quality, delay, wall)` values preserving `actions` order."""
+        read_q, read_l, read_w = model.read_components(z)
+        write_actions = [action for action in actions if not action.is_read]
+        write_q = write_l = write_w = None
+        if write_actions:
+            outputs = model.write_values(z, write_actions)
+            write_q, write_l, write_w = (
+                outputs.quality[0],
+                outputs.delay[0],
+                outputs.wall[0],
+            )
+        column = {action: index for index, action in enumerate(write_actions)}
+        quality: list[torch.Tensor] = []
+        delay: list[torch.Tensor] = []
+        wall: list[torch.Tensor] = []
+        for action in actions:
+            if action.is_read:
+                quality.append(read_q[0])
+                delay.append(read_l[0])
+                wall.append(read_w[0])
+            else:
+                index = column[action]
+                quality.append(write_q[index])
+                delay.append(write_l[index])
+                wall.append(write_w[index])
+        return quality, delay, wall
+
+    def _best_next_components_from_z(
+        self,
+        online_z: torch.Tensor,
+        target_z: torch.Tensor,
+        actions: Sequence[Action],
+    ) -> tuple[float, float, float]:
+        """Double DQN: online selects, target evaluates, three components."""
+        if not actions:
+            return 0.0, 0.0, 0.0
+        online_q, online_l, online_w = self._component_values(
+            self.network, online_z, actions
+        )
+        utilities = [
+            float(q) - float(self.cfg.beta_lag) * float(l)
+            - float(self.cfg.beta_wall) * float(w)
+            for q, l, w in zip(online_q, online_l, online_w)
+        ]
+        best = max(range(len(utilities)), key=lambda index: utilities[index])
+        target_q, target_l, target_w = self._component_values(
+            self.target_network, target_z, actions
+        )
+        return (
+            float(target_q[best]),
+            float(target_l[best]),
+            float(target_w[best]),
+        )
+
     def _best_next_value(self, state: StateInput, actions: Sequence[Action]) -> float:
         """`max_a' [Q_target(s', a') - lambda_t * C(s', a')]` for one state."""
         if not actions:
@@ -348,13 +487,17 @@ class CAVCTrainer:
         update_every = max(1, int(self.cfg.target_update_every))
         target_seconds = 0.0
         target_calls = 0
+        scales = self._component_scales(targets) if self.cfg.tri_value else None
 
         for epoch in range(epochs):
             # `compute_targets` encodes every unique successor in one batch and
             # caches the backup per `(state, actions)`, so this wall time is the
             # amortised cost of the whole epoch's Bellman targets.
             target_start = time.perf_counter()
-            target_values = self.compute_targets(targets)
+            if self.cfg.tri_value:
+                target_values = self.compute_component_targets(targets)
+            else:
+                target_values = self.compute_targets(targets)
             target_seconds += max(0.0, time.perf_counter() - target_start)
             target_calls += 1
             batches_of_indices = self._state_group_batches(targets, rng)
@@ -362,6 +505,10 @@ class CAVCTrainer:
             epoch_totals = {
                 "total": 0.0,
                 "value": 0.0,
+                "quality": 0.0,
+                "delay": 0.0,
+                "wall": 0.0,
+                "pair": 0.0,
                 "rank": 0.0,
                 "error": 0.0,
                 "no_emit": 0.0,
@@ -373,26 +520,44 @@ class CAVCTrainer:
                 batch = [targets[index] for index in indices]
                 batch_targets = [target_values[index] for index in indices]
 
-                loss, parts = self._batch_loss(batch, batch_targets)
+                if self.cfg.tri_value:
+                    loss, parts = self._batch_loss_v4(
+                        batch, batch_targets, scales=scales
+                    )
+                else:
+                    loss, parts = self._batch_loss(batch, batch_targets)
                 optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.network.parameters(), 1.0)
                 optimizer.step()
+                if self.cfg.tri_value and float(self.cfg.target_tau) > 0.0:
+                    self._soft_update(float(self.cfg.target_tau))
 
                 epoch_totals["total"] += float(loss.detach())
-                for name in ("value", "rank", "error", "no_emit", "emit"):
-                    epoch_totals[name] += float(parts[name])
+                for name in (
+                    "value",
+                    "quality",
+                    "delay",
+                    "wall",
+                    "pair",
+                    "rank",
+                    "error",
+                    "no_emit",
+                    "emit",
+                ):
+                    epoch_totals[name] += float(parts.get(name, 0.0))
                 batches += 1
 
             for name in epoch_totals:
                 epoch_totals[name] /= max(1, batches)
             self.history.append(epoch_totals)
 
-            if (epoch + 1) % update_every == 0:
-                self._sync_target()
+            if not (self.cfg.tri_value and float(self.cfg.target_tau) > 0.0):
+                if (epoch + 1) % update_every == 0:
+                    self._sync_target()
 
         final = self.history[-1]
-        return {
+        summary = {
             # Report the epochs that actually ran rather than echoing the
             # configured value; the zero-epoch path returns 0 above.
             "epochs": len(self.history),
@@ -408,6 +573,16 @@ class CAVCTrainer:
             "target_seconds": float(target_seconds),
             "target_calls": int(target_calls),
         }
+        if self.cfg.tri_value:
+            summary.update(
+                {
+                    "quality_loss": final.get("quality", 0.0),
+                    "delay_loss": final.get("delay", 0.0),
+                    "wall_loss": final.get("wall", 0.0),
+                    "pair_loss": final.get("pair", 0.0),
+                }
+            )
+        return summary
 
     def _state_group_batches(
         self,
@@ -567,6 +742,243 @@ class CAVCTrainer:
             "emit": float(emit_loss.detach()),
         }
         return total, parts
+
+    def _component_scales(self, targets: Sequence[ActionTarget]) -> dict[str, float]:
+        """Robust per-head scales from training targets (MAD-based)."""
+        import statistics
+
+        def scale(values: Sequence[float]) -> float:
+            values = [float(value) for value in values if math.isfinite(float(value))]
+            if not values:
+                return 1.0
+            center = statistics.median(values)
+            deviation = statistics.median(abs(value - center) for value in values)
+            return max(1.4826 * deviation, 1e-3)
+
+        return {
+            "quality": scale(
+                [
+                    target.quality_target
+                    if target.quality_target is not None
+                    else target.value_target
+                    for target in targets
+                ]
+            ),
+            "delay": scale([target.delay_target or 0.0 for target in targets]),
+            "wall": scale([target.wall_target or 0.0 for target in targets]),
+        }
+
+    def _pairwise_advantage_loss(
+        self,
+        utilities: torch.Tensor,
+        targets: torch.Tensor,
+        state_keys: Sequence[str],
+        actions: Sequence[Action],
+    ) -> torch.Tensor:
+        """Huber regression on `U(s,a) - U(s,b4h6)` within each state group."""
+        baseline = Action(
+            int(self.cfg.advantage_baseline[0]),
+            int(self.cfg.advantage_baseline[1]),
+        )
+        groups: dict[str, list[int]] = {}
+        for index, key in enumerate(state_keys):
+            if key:
+                groups.setdefault(key, []).append(index)
+        predicted: list[torch.Tensor] = []
+        expected: list[torch.Tensor] = []
+        for indices in groups.values():
+            anchor = next(
+                (
+                    index
+                    for index in indices
+                    if actions[index] == baseline
+                ),
+                None,
+            )
+            if anchor is None:
+                continue
+            for index in indices:
+                if index == anchor:
+                    continue
+                predicted.append(utilities[index] - utilities[anchor])
+                expected.append(targets[index] - targets[anchor])
+        zero = utilities.new_zeros(())
+        if not predicted:
+            return zero
+        return F.huber_loss(
+            torch.stack(predicted),
+            torch.stack(expected),
+            delta=self.cfg.huber_delta,
+        )
+
+    def _batch_loss_v4(
+        self,
+        batch: Sequence[ActionTarget],
+        target_values: Sequence[tuple[float, float, float]],
+        *,
+        scales: dict[str, float] | None = None,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Three-component value loss with paired advantage and ranking."""
+        states = [target.state for target in batch]
+        actions = [target.action for target in batch]
+        state_keys = [target.state_key for target in batch]
+
+        unique_states: list[StateInput] = []
+        state_to_index: dict[StateInput, int] = {}
+        row_to_unique: list[int] = []
+        for state in states:
+            if state not in state_to_index:
+                state_to_index[state] = len(unique_states)
+                unique_states.append(state)
+            row_to_unique.append(state_to_index[state])
+
+        z = self._encode_states(self.network, unique_states)
+        unique_index = torch.tensor(row_to_unique, dtype=torch.long)
+        read_q, read_l, read_w = self.network.read_components(z)
+
+        write_actions: list[Action] = []
+        for action in actions:
+            if not action.is_read and action not in write_actions:
+                write_actions.append(action)
+
+        write_outputs: WriteOutputs | None = None
+        column: dict[Action, int] = {}
+        gathered_q = read_q[unique_index]
+        gathered_l = read_l[unique_index]
+        gathered_w = read_w[unique_index]
+        if write_actions:
+            write_outputs = self.network.write_values(z, write_actions)
+            column = {action: index for index, action in enumerate(write_actions)}
+            action_columns = torch.tensor(
+                [column.get(action, 0) for action in actions], dtype=torch.long
+            )
+            gathered_q = write_outputs.quality[unique_index, action_columns]
+            gathered_l = write_outputs.delay[unique_index, action_columns]
+            gathered_w = write_outputs.wall[unique_index, action_columns]
+
+        write_mask = torch.tensor(
+            [not action.is_read for action in actions], dtype=torch.bool
+        )
+        quality = torch.where(write_mask, gathered_q, read_q[unique_index])
+        delay = torch.where(write_mask, gathered_l, read_l[unique_index])
+        wall = torch.where(write_mask, gathered_w, read_w[unique_index])
+        utility = (
+            quality
+            - float(self.cfg.beta_lag) * delay
+            - float(self.cfg.beta_wall) * wall
+        )
+
+        y_quality = torch.tensor(
+            [float(value[0]) for value in target_values], dtype=torch.float32
+        )
+        y_delay = torch.tensor(
+            [float(value[1]) for value in target_values], dtype=torch.float32
+        )
+        y_wall = torch.tensor(
+            [float(value[2]) for value in target_values], dtype=torch.float32
+        )
+        y_utility = (
+            y_quality
+            - float(self.cfg.beta_lag) * y_delay
+            - float(self.cfg.beta_wall) * y_wall
+        )
+
+        scales = scales or {"quality": 1.0, "delay": 1.0, "wall": 1.0}
+        zero = utility.new_zeros(())
+        quality_loss = F.huber_loss(
+            (quality - y_quality) / float(scales["quality"]),
+            torch.zeros_like(quality),
+            delta=self.cfg.huber_delta,
+        )
+        delay_loss = F.huber_loss(
+            (delay - y_delay) / float(scales["delay"]),
+            torch.zeros_like(delay),
+            delta=self.cfg.huber_delta,
+        )
+        wall_loss = F.huber_loss(
+            (wall - y_wall) / float(scales["wall"]),
+            torch.zeros_like(wall),
+            delta=self.cfg.huber_delta,
+        )
+        value_loss = quality_loss + delay_loss + wall_loss
+        pair_loss = self._pairwise_advantage_loss(
+            utility, y_utility, state_keys, actions
+        )
+        rank_loss = pairwise_ranking_loss(
+            utility,
+            y_utility,
+            state_keys,
+            float(self.cfg.tri_rank_epsilon),
+            write_mask=write_mask.tolist(),
+        )
+
+        error_loss = zero
+        no_emit_loss = zero
+        emit_loss = zero
+        write_rows = [
+            index for index, action in enumerate(actions) if not action.is_read
+        ]
+        if write_outputs is not None and write_rows:
+            rows = torch.tensor(write_rows, dtype=torch.long)
+            columns = torch.tensor(
+                [column[actions[index]] for index in write_rows],
+                dtype=torch.long,
+            )
+            rows_in_states = unique_index[rows]
+            error_logits = write_outputs.error_risk[rows_in_states, columns]
+            error_targets = torch.tensor(
+                [batch[index].error_target for index in write_rows],
+                dtype=error_logits.dtype,
+            )
+            error_loss = F.binary_cross_entropy_with_logits(
+                error_logits, error_targets
+            )
+            no_emit_logits = write_outputs.no_emit[rows_in_states, columns]
+            no_emit_targets = torch.tensor(
+                [batch[index].no_emit_target for index in write_rows],
+                dtype=no_emit_logits.dtype,
+            )
+            no_emit_loss = F.binary_cross_entropy_with_logits(
+                no_emit_logits, no_emit_targets
+            )
+            emit_values = write_outputs.expected_emit[rows_in_states, columns]
+            emit_targets = torch.tensor(
+                [batch[index].emit_target for index in write_rows],
+                dtype=emit_values.dtype,
+            )
+            emit_loss = F.huber_loss(
+                emit_values, emit_targets, delta=self.cfg.huber_delta
+            )
+
+        total = (
+            value_loss
+            + float(self.cfg.pair_weight) * pair_loss
+            + self.cfg.alpha_rank * rank_loss
+            + self.cfg.alpha_error * error_loss
+            + self.cfg.alpha_noemit * no_emit_loss
+            + self.cfg.alpha_emit * emit_loss
+        )
+        return total, {
+            "value": float(value_loss.detach()),
+            "quality": float(quality_loss.detach()),
+            "delay": float(delay_loss.detach()),
+            "wall": float(wall_loss.detach()),
+            "pair": float(pair_loss.detach()),
+            "rank": float(rank_loss.detach()),
+            "error": float(error_loss.detach()),
+            "no_emit": float(no_emit_loss.detach()),
+            "emit": float(emit_loss.detach()),
+        }
+
+    def _soft_update(self, tau: float) -> None:
+        """Polyak-average the target network toward the online network."""
+        tau = float(tau)
+        with torch.no_grad():
+            for target, online in zip(
+                self.target_network.parameters(), self.network.parameters()
+            ):
+                target.mul_(1.0 - tau).add_(online, alpha=tau)
+        self.target_network.eval()
 
     # ------------------------------------------------------------------
     # Helpers

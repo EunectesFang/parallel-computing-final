@@ -1822,6 +1822,29 @@ def test_dev_calibration_values_match_independent_holdout(tmp_path):
     )
 
 
+def test_calibration_holdout_keeps_whole_sentences_together():
+    # Real state keys are ``dev:0000:3``: the sentence id itself has a colon.
+    targets = [
+        _target(f"dev:{sentence:04d}:{read_pos}")
+        for sentence in range(6)
+        for read_pos in range(3)
+    ]
+    train, holdout = kaggle._split_calibration_targets(targets, every=2)
+
+    train_sentences = {target.state_key.rsplit(":", 1)[0] for target in train}
+    holdout_sentences = {
+        target.state_key.rsplit(":", 1)[0] for target in holdout
+    }
+    assert train_sentences and holdout_sentences
+    assert train_sentences.isdisjoint(holdout_sentences)
+    assert holdout_sentences == {"dev:0000", "dev:0002", "dev:0004"}
+    # Every state of a held-out sentence moves to calibration together.
+    for target in targets:
+        sentence = target.state_key.rsplit(":", 1)[0]
+        destination = holdout if sentence in holdout_sentences else train
+        assert target in destination
+
+
 def _target(state_key, action=None):
     return ActionTarget(
         state=StateInput(
@@ -2586,3 +2609,37 @@ def test_repeated_deadline_return_preserves_an_existing_deadline_sibling(
     assert summary["deadline_artifacts"]["summary"].endswith(
         "summary.deadline2.json"
     )
+
+
+def test_cost_topology_uses_serial_for_one_device_and_pipeline_for_two():
+    from types import SimpleNamespace
+
+    one = SimpleNamespace(device="cuda:0")
+    same = SimpleNamespace(device="cuda:0")
+    other = SimpleNamespace(device="cuda:1")
+
+    assert kaggle._resolve_cost_topology(one, same) == "serial"
+    assert kaggle._resolve_cost_topology(one, other) == "pipeline"
+    assert (
+        kaggle._resolve_cost_topology(
+            one, same, predictor_devices=("cuda:0", "cuda:1")
+        )
+        == "pipeline"
+    )
+    assert kaggle._resolve_cost_topology(one, same, override="pipeline") == "pipeline"
+    with pytest.raises(ValueError, match="topology"):
+        kaggle._resolve_cost_topology(one, same, override="two-chips")
+
+
+def test_serial_cost_topology_prices_pred_plus_mt_in_kaggle_path():
+    from controller_v3.action import Action
+    from controller_v3.cost_model import MeasuredCostTable
+
+    base = MeasuredCostTable([(0, 0, Action(2, 4), 0.5, 0.25)])
+    model = kaggle._cost_model_for_topology(base, "serial")
+    assert model.topology == "serial"
+    estimate = base.predict(0, 0, Action(2, 4), 5, 3)
+    marginal = model.marginal_wall(
+        0.0, 10.0, 0.0, 0.0, 0, 0, Action(2, 4), 5, 3
+    )
+    assert marginal == pytest.approx(estimate.pred_s + estimate.mt_s)

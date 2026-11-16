@@ -1,0 +1,42 @@
+[{"stream_name":"stderr","time":23.670980409,"data":"ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.\n"}
+,{"stream_name":"stderr","time":23.671020209,"data":"gradio-client 2.7.2 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":23.671026767,"data":"gradio 6.30.0 requires huggingface-hub\u003c3.0,\u003e=1.16.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stderr","time":23.671031399,"data":"gradio 6.30.0 requires pillow\u003c13.0,\u003e=8.0, but you have pillow 13.0.0 which is incompatible.\n"}
+,{"stream_name":"stderr","time":23.671042665999998,"data":"diffusers 0.42.0 requires huggingface-hub\u003c3.0,\u003e=1.32.0, but you have huggingface-hub 0.36.2 which is incompatible.\n"}
+,{"stream_name":"stdout","time":23.934354621,"data":"week/controller_v3/__init__.py SHA-256: 4292684d752d01ad6a287963abcd32027b9d38bf93fc07a581e8b4548c3c7fd4\n"}
+,{"stream_name":"stdout","time":23.934507543,"data":"week/controller_v3/action.py SHA-256: 856d5d19dc1ba82c1be7144355bbe4d778d698d8d9757024f962ff73103988f1\n"}
+,{"stream_name":"stdout","time":23.935078221,"data":"week/controller_v3/checkpoint.py SHA-256: e9592c65ab3b5c91e5a8bd5e19b8d4fbfd2c74d96ab4d8deb6f9eb95a1104b0c\n"}
+,{"stream_name":"stdout","time":23.935135156,"data":"week/controller_v3/cli.py SHA-256: 98799e2ce6a6f3e1ed53f2506a791ab7c35572b568c7365f99272a43e26a5727\n"}
+,{"stream_name":"stdout","time":23.935388034,"data":"week/controller_v3/config.py SHA-256: 127865646722d416b1f5dc2ea86a26f5308660242f15083e702a7dbb094044f5\n"}
+,{"stream_name":"stdout","time":23.935717994,"data":"week/controller_v3/cost_model.py SHA-256: 58792de131117aa6dc7857214f42c378807a31dbd9c7beb75a667428c06150c1\n"}
+,{"stream_name":"stdout","time":23.935966628,"data":"week/controller_v3/evaluate.py SHA-256: a1acb8535b9c89c18aff6bbec15bef3de37cf3781c476804081f31e898706047\n"}
+,{"stream_name":"stdout","time":23.93625069,"data":"week/controller_v3/evaluator.py SHA-256: c50f5604d0d92bdcbec2c6a7dcf4ea93358d4c8f7e4e73975fe26745d0733967\n"}
+,{"stream_name":"stdout","time":23.936600574,"data":"week/controller_v3/features.py SHA-256: 84b4cb7a42eca09a49744e74b631e3333bd554cfbcabe10befed22279bebeea5\n"}
+,{"stream_name":"stdout","time":23.937338224,"data":"week/controller_v3/kaggle.py SHA-256: e348e0cb1646720b432cbe838193e88fa373756e1fedc7522464c0e9c0949c1e\n"}
+,{"stream_name":"stdout","time":23.93764618,"data":"week/controller_v3/labeler.py SHA-256: f43d0df205d25ca70987199aeea07571a3b34b30124d2fb44fdf20d715fdbcdf\n"}
+,{"stream_name":"stdout","time":23.937862599,"data":"week/controller_v3/network.py SHA-256: 62168d89f622b7f008059ecc376a1f47cc05b3646112761d88f35e462ac8ba05\n"}
+,{"stream_name":"stdout","time":23.938049907,"data":"week/controller_v3/post_controller.py SHA-256: 5bf1e9c5819e0909690f9a428583e07401da8815fecfd63cc29d306b0ea2bfa5\n"}
+,{"stream_name":"stdout","time":23.938343033,"data":"week/controller_v3/retrain.py SHA-256: 2f3a4145be1d4bd45897d23d0d4b411fbaec3a03063a0a9e694ab160261cf5c2\n"}
+,{"stream_name":"stdout","time":23.938556307,"data":"week/controller_v3/reward.py SHA-256: 3d942c6c88645db34f0c5709b3dd568ab2d79641fa1167feac1e8b657c575556\n"}
+,{"stream_name":"stdout","time":23.938958042,"data":"week/controller_v3/rollout.py SHA-256: 3e97f9a203cb21fb1dae63d62992d1f3d622077a7f4b3d97c3570afd76808eb0\n"}
+,{"stream_name":"stdout","time":23.939206857,"data":"week/controller_v3/runtime.py SHA-256: 756d068746cda962938b38b0b7b0d43db6e7d04d33c693af1e861481b45faf8d\n"}
+,{"stream_name":"stdout","time":23.93949124,"data":"week/controller_v3/targets.py SHA-256: 2110ea00c4a0d2e88df91af9acb116f89716c3f9dcc7acdbf8532bbd130f6469\n"}
+,{"stream_name":"stdout","time":23.939735846,"data":"week/controller_v3/text_encoder.py SHA-256: 2c2dd3987aaa551749c52167978fc63586cc6d127bbb763ec000eeccd74a4094\n"}
+,{"stream_name":"stdout","time":23.940058853,"data":"week/controller_v3/trainer.py SHA-256: 47d2ccd544043b64bf853f8562936d136e4ba4f6a663cf567b2b55241c50bb26\n"}
+,{"stream_name":"stdout","time":23.940248552,"data":"week/cpu_embedding.py SHA-256: c154f0178108068afd33df62d2f4f1af43cdce1a4fa04657ede7760a29defbe7\n"}
+,{"stream_name":"stdout","time":23.940647975,"data":"paired/run_pfba.py SHA-256: f0ad07e2d2dd17809690172e03f99deef7da28481c96753052e8d83d09a0ac27\n"}
+,{"stream_name":"stderr","time":50.948524647,"data":"`torch_dtype` is deprecated! Use `dtype` instead!\n"}
+,{"stream_name":"stderr","time":70.732771876,"data":"WARNING: All log messages before absl::InitializeLog() is called are written to STDERR\n"}
+,{"stream_name":"stderr","time":70.732815731,"data":"I0000 00:00:1794828478.195748      33 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.\n"}
+,{"stream_name":"stdout","time":90.85696497,"data":"[cavc] predictor small@cuda:0 x translator small@cuda:0\n"}
+,{"stream_name":"stdout","time":1119.178164123,"data":"[cavc-eval] v3_baseline: BLEU=41.047458014298535 LAAL=9.030839233705022 completion=7.163835124800006 READ=0.8507772020725388\n"}
+,{"stream_name":"stdout","time":1954.56962512,"data":"[cavc-eval] v3_baseline_guard: BLEU=36.81771515878535 LAAL=3.2774338020202043 completion=14.6295562256835 READ=0.40414507772020725\n"}
+,{"stream_name":"stdout","time":2444.456762264,"data":"[cavc-eval] v4_convex: BLEU=34.20954706791756 LAAL=2.3985072525537583 completion=8.737088628499812 READ=0.011398963730569948\n"}
+,{"stream_name":"stdout","time":2935.621129244,"data":"[cavc-eval] v4_convex_guard: BLEU=34.15179976740286 LAAL=2.3872594218685874 completion=8.741128601766702 READ=0.0031088082901554403\n"}
+,{"stream_name":"stderr","time":2945.180670692,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":2945.180737435,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":2945.577008284,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":2945.577036105,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":2946.524273885,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":2947.14655082,"data":"[NbConvertApp] Writing 1339745 bytes to __results__.html\n"}
+]

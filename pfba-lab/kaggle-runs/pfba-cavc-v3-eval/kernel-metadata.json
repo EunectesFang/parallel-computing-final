@@ -1,0 +1,15 @@
+{
+  "id": "eunectesqaq/pfba-cavc-v3-eval",
+  "title": "pfba cavc v3 eval",
+  "code_file": "kaggle_entry.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "eunectesqaq/cavc-retrain-checkpoints"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

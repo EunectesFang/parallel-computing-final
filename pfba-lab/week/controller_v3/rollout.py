@@ -47,11 +47,22 @@ from typing import Sequence
 
 from .action import READ, Action
 from .config import ControllerConfig
-from .features import FeatureBuilder, HistoryTracker, advance_virtual_clock
+from .features import (
+    NUMERIC_FEATURES,
+    FeatureBuilder,
+    HistoryTracker,
+    advance_virtual_clock,
+)
 from .post_controller import ADD_2_BRANCHES, PostAction
 from .runtime import ControlledRuntime, StepResult, run_pfba
 
-__all__ = ["RolloutTrace", "run_rollout", "run_fixed_rollout"]
+__all__ = [
+    "RolloutTrace",
+    "read_threshold",
+    "run_rollout",
+    "run_fixed_rollout",
+    "select_guarded_action",
+]
 
 # The fixed baseline always writes this budget; it never reads.
 FIXED_ACTION = Action(4, 6)
@@ -159,6 +170,44 @@ def _score_state(network, vector, query_actions: Sequence[Action]):
                 else:
                     no_emit_by_action[action] = 0.0
     return z, read_q, q_by_action, no_emit_by_action
+
+
+def _score_state_v4(network, vector, query_actions: Sequence[Action]):
+    """Three-component READ/WRITE scores for one state (CAVC-Q V4)."""
+    import torch
+
+    numeric = torch.tensor([vector.numeric], dtype=torch.float32)
+    predictor_id = torch.tensor([vector.predictor_id], dtype=torch.long)
+    translator_id = torch.tensor([vector.translator_id], dtype=torch.long)
+    src_ids = (
+        torch.tensor([list(vector.src_ids)], dtype=torch.long)
+        if vector.src_ids
+        else torch.zeros((1, 0), dtype=torch.long)
+    )
+    tgt_ids = (
+        torch.tensor([list(vector.tgt_ids)], dtype=torch.long)
+        if vector.tgt_ids
+        else torch.zeros((1, 0), dtype=torch.long)
+    )
+
+    with torch.no_grad():
+        z = network.encode(numeric, predictor_id, translator_id, src_ids, tgt_ids)
+        read_q, read_l, read_w = network.read_components(z)
+        read = (float(read_q[0]), float(read_l[0]), float(read_w[0]))
+        write: dict[Action, tuple[float, float, float]] = {}
+        no_emit_by_action: dict[Action, float] = {}
+        if query_actions:
+            outputs = network.write_values(z, list(query_actions))
+            for index, action in enumerate(query_actions):
+                write[action] = (
+                    float(outputs.quality[0][index]),
+                    float(outputs.delay[0][index]),
+                    float(outputs.wall[0][index]),
+                )
+                no_emit_by_action[action] = _sigmoid(
+                    float(outputs.no_emit[0][index])
+                )
+    return z, read, write, no_emit_by_action
 
 
 # Plain cost models warned about at most once each. `WeakSet` keeps this from
@@ -415,6 +464,131 @@ def _release_time(completion_s: float, read_pos: int, arrival_gap: float) -> flo
     return max(float(completion_s), arrived)
 
 
+def read_threshold(
+    cfg: ControllerConfig,
+    *,
+    normalized_lag: float,
+    consecutive_reads: int,
+    no_commit_streak: int,
+) -> float:
+    """State-dependent admission margin for READ over the best WRITE.
+
+    The threshold rises with normalized source backlog (after the first
+    ``read_threshold_lag_ref`` words, scaled by ``read_threshold_lag_scale``)
+    and with consecutive waits. ``consecutive_reads`` and
+    ``no_commit_streak`` are disjoint event counts: the caller passes READs
+    for the first and failed WRITEs for the second, so one wait is never
+    charged twice. Streak terms are capped at three. All multipliers default
+    to zero, which makes the threshold zero and reproduces V3 selection.
+    """
+    scale = float(cfg.read_threshold_lag_scale)
+    if scale <= 0.0:
+        raise ValueError("read_threshold_lag_scale must be positive")
+    lag_term = max(
+        0.0,
+        (max(0.0, float(normalized_lag)) - float(cfg.read_threshold_lag_ref))
+        / scale,
+    )
+    reads = min(3, max(0, int(consecutive_reads)))
+    failures = min(3, max(0, int(no_commit_streak)))
+    return float(
+        cfg.read_threshold
+        + cfg.read_threshold_lag * lag_term
+        + cfg.read_threshold_reads * reads
+        + cfg.read_threshold_no_commit * failures
+    )
+
+
+def select_guarded_action(
+    *,
+    scores: Mapping[Action, float],
+    costs: Mapping[Action, float],
+    candidate_writes: Sequence[Action],
+    baseline: Action | None,
+    cfg: ControllerConfig,
+    normalized_lag: float,
+    consecutive_reads: int,
+    no_commit_streak: int,
+    no_emit_risk: Mapping[Action, float] | None = None,
+) -> tuple[Action, float, list[Action]]:
+    """Choose READ or a WRITE under the V3.1 cost guards.
+
+    Two layers run before the usual argmax:
+
+    1. **Expensive-action margin.** A WRITE whose cost exceeds the baseline's
+       must beat the baseline's score by ``cfg.expensive_margin``. Near-ties
+       keep the cheaper action. The baseline is always admitted; cheaper
+       actions are never filtered by this margin.
+    2. **Dynamic READ threshold.** READ wins only when its score exceeds the
+       best admitted WRITE by ``read_threshold(...)``. Ties go to READ at a
+       zero threshold, matching V3's deterministic tie-break.
+
+    ``scores`` are already in the rollout's scoring space (advantage vs the
+    baseline when one is configured). A calibrated no-emit risk can be used
+    as a **soft** penalty (``cfg.no_emit_penalty``) or a hard veto
+    (``cfg.no_emit_veto``). The soft penalty is the default in the V3.1 guard:
+    it lowers an unreliable WRITE without forcing READ when every WRITE is
+    unreliable. If the hard veto rejects the best WRITE, or every WRITE is
+    filtered, READ is chosen. The caller still submits only through RALCP;
+    this function chooses whether to execute a WRITE, not whether to commit
+    its output.
+
+    Returns ``(chosen, threshold, admitted_writes)``.
+    """
+    if READ not in scores:
+        raise ValueError("scores must include READ")
+
+    def net_score(action: Action) -> float:
+        value = float(scores[action])
+        if (
+            no_emit_risk is not None
+            and not action.is_read
+            and float(cfg.no_emit_penalty) != 0.0
+        ):
+            value -= float(cfg.no_emit_penalty) * float(
+                no_emit_risk.get(action, 0.0)
+            )
+        return value
+
+    adjusted = {action: net_score(action) for action in scores}
+    baseline_score = 0.0
+    if baseline is not None and not baseline.is_read:
+        baseline_score = float(adjusted.get(baseline, 0.0))
+
+    admitted: list[Action] = []
+    for action in candidate_writes:
+        if (
+            baseline is not None
+            and not baseline.is_read
+            and float(costs.get(action, 0.0))
+            > float(costs.get(baseline, 0.0)) + 1e-12
+            and float(adjusted[action]) - baseline_score
+            <= float(cfg.expensive_margin) + 1e-12
+        ):
+            continue
+        admitted.append(action)
+
+    threshold = read_threshold(
+        cfg,
+        normalized_lag=normalized_lag,
+        consecutive_reads=consecutive_reads,
+        no_commit_streak=no_commit_streak,
+    )
+    if not admitted:
+        return READ, threshold, admitted
+
+    best_write = max(admitted, key=lambda action: float(adjusted[action]))
+    if (
+        no_emit_risk is not None
+        and float(no_emit_risk.get(best_write, 0.0))
+        > float(cfg.no_emit_veto) + 1e-12
+    ):
+        return READ, threshold, admitted
+    if float(adjusted[READ]) - float(adjusted[best_write]) >= threshold - 1e-12:
+        return READ, threshold, admitted
+    return best_write, threshold, admitted
+
+
 def run_rollout(
     sentence,
     predictor,
@@ -526,8 +700,12 @@ def _run_rollout_impl(
     delays: list[int] = []
     steps: list[dict] = []
     # One state-update implementation shared with the offline label path.
-    tracker = HistoryTracker()
+    tracker = HistoryTracker(arrival_gap=float(cfg.arrival_gap))
     completion_s = 0.0
+    # Consecutive READ decisions. Failed WRITEs are the other half of the
+    # no-commit streak; the two counts are disjoint so the dynamic threshold
+    # never charges one wait twice.
+    consecutive_reads = 0
 
     # Every decision advances one source position, so a normal run needs at
     # most `source_len - min_start + 2` iterations. The generous cap is a
@@ -593,9 +771,24 @@ def _run_rollout_impl(
             predictor_id=int(predictor_id),
             translator_id=int(translator_id),
         )
-        z_pre, q_read, q_by_action, no_emit_by_action = _score_state(
-            network, vector, query_actions
-        )
+        tri_value = bool(getattr(cfg, "tri_value", False))
+        read_components = write_components = None
+        if tri_value:
+            (
+                z_pre,
+                read_components,
+                write_components,
+                no_emit_by_action,
+            ) = _score_state_v4(network, vector, query_actions)
+            q_read = float(read_components[0])
+            q_by_action = {
+                action: float(values[0])
+                for action, values in write_components.items()
+            }
+        else:
+            z_pre, q_read, q_by_action, no_emit_by_action = _score_state(
+                network, vector, query_actions
+            )
 
         src_words = len(observed.split())
         tgt_words = len(committed)
@@ -654,25 +847,64 @@ def _run_rollout_impl(
                     c_baseline = price(baseline)
 
         scores: dict[Action, float] = {}
-        for action in (READ, *candidate_writes):
-            q_value = q_read if action.is_read else q_by_action[action]
-            cost = 0.0 if action.is_read else cost_by_action[action]
-            if baseline is not None:
-                scores[action] = (
-                    (q_value - q_baseline)
-                    - float(cfg.lambda_t) * (cost - c_baseline)
+        if tri_value:
+            # V4: U = Qq - beta_lag*Ql - beta_wall*Qw. The wall head already
+            # carries time, so lambda_t * cost must not be subtracted again.
+            def utility(action: Action) -> float:
+                components = (
+                    read_components
+                    if action.is_read
+                    else write_components[action]
                 )
-            else:
-                scores[action] = q_value - float(cfg.lambda_t) * cost
+                return (
+                    float(components[0])
+                    - float(cfg.beta_lag) * float(components[1])
+                    - float(cfg.beta_wall) * float(components[2])
+                )
+
+            baseline_utility = utility(baseline) if baseline is not None else 0.0
+            for action in (READ, *candidate_writes):
+                scores[action] = utility(action) - baseline_utility
+            q_read = utility(READ)
+            q_by_action = {
+                action: utility(action) for action in candidate_writes
+            }
+            if baseline is not None and not baseline.is_read:
+                q_by_action.setdefault(baseline, utility(baseline))
+        else:
+            for action in (READ, *candidate_writes):
+                q_value = q_read if action.is_read else q_by_action[action]
+                cost = 0.0 if action.is_read else cost_by_action[action]
+                if baseline is not None:
+                    scores[action] = (
+                        (q_value - q_baseline)
+                        - float(cfg.lambda_t) * (cost - c_baseline)
+                    )
+                else:
+                    scores[action] = q_value - float(cfg.lambda_t) * cost
 
         # Deterministic tie-break: READ is first, and later actions must beat it
         # strictly. This keeps a zero-initialised network from writing at once.
-        chosen = READ
-        best_score = scores[READ]
-        for action in candidate_writes:
-            if scores[action] > best_score:
-                chosen = action
-                best_score = scores[action]
+        # V3.1 adds two guards before the same argmax; all-zero defaults make
+        # this exactly the V3 selection.
+        normalized_lag = float(
+            vector.numeric[NUMERIC_FEATURES.index("normalized_lag")]
+        )
+        no_commit_streak = max(
+            0,
+            int(tracker.history.words_since_commit) - consecutive_reads,
+        )
+        chosen, read_threshold_value, admitted_writes = select_guarded_action(
+            scores=scores,
+            costs=cost_by_action,
+            candidate_writes=candidate_writes,
+            baseline=baseline,
+            cfg=cfg,
+            normalized_lag=normalized_lag,
+            consecutive_reads=consecutive_reads,
+            no_commit_streak=no_commit_streak,
+            no_emit_risk=no_emit_by_action,
+        )
 
         best_write_q = max(
             (q_by_action[action] for action in candidate_writes), default=None
@@ -682,6 +914,7 @@ def _run_rollout_impl(
         # READ: no sampling, no translation, no commit.
         # --------------------------------------------------------------
         if chosen.is_read:
+            consecutive_reads += 1
             completion_s = advance_virtual_clock(
                 completion_s, read_pos, cfg.arrival_gap
             )
@@ -714,6 +947,7 @@ def _run_rollout_impl(
         # --------------------------------------------------------------
         # WRITE: provisional execute, optional post controller, commit.
         # --------------------------------------------------------------
+        consecutive_reads = 0
         seed = _step_seed(cfg, sentence_id, read_pos, split)
         provisional: StepResult = _execute_step(
             runtime,

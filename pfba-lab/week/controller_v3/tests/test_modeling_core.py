@@ -232,6 +232,22 @@ def test_read_keeps_committed_and_advances_observed_while_writes_advance_committ
     assert int(write_two.numeric[TGT_WORDS]) == committed_before + 2
     assert int(write_one.numeric[TGT_WORDS]) == committed_before + 1
 
+    # History must also be action-conditioned: READ reports no action, while
+    # each write reports its own B/H. A shared behavior History would make all
+    # three successors identical here.
+    def feature(state, name):
+        return state.numeric[NUMERIC_FEATURES.index(name)]
+
+    assert feature(read_next, "last_B") == 0.0
+    assert feature(read_next, "last_H") == 0.0
+    assert feature(read_next, "last_empty") == 1.0
+    assert feature(write_two, "last_B") == 2.0
+    assert feature(write_two, "last_H") == 4.0
+    assert feature(write_two, "last_empty") == 0.0
+    assert feature(write_one, "last_B") == 4.0
+    assert feature(write_one, "last_H") == 6.0
+    assert feature(write_one, "last_empty") == 0.0
+
 
 # ----------------------------------------------------------------------
 # READ can win the backup

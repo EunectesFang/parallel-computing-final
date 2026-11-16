@@ -1,0 +1,15 @@
+{
+  "candidate_mode": "per_candidate",
+  "fixed_action": "b4h6",
+  "holdout_sentences": 17,
+  "label_format": 6,
+  "max_hours": 4.0,
+  "mode": "dev",
+  "newly_labeled": 165,
+  "post_controller": "disabled",
+  "read_prob": 0.25,
+  "stopped_for_deadline": false,
+  "stride": 1,
+  "total_labeled": 164,
+  "train_sentences": 165
+}

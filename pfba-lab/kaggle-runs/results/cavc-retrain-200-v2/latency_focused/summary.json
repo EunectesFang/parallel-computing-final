@@ -1,0 +1,336 @@
+{
+  "base_checkpoint": "pfba-lab\\kaggle-runs\\results\\cavc-dev-200\\checkpoint.pt",
+  "behavior_diagnostics": {
+    "max_run": 8,
+    "mean_run": 1.3849765258215962,
+    "n_read_runs": 426,
+    "n_states": 2308,
+    "read_fraction": 0.255632582322357
+  },
+  "checkpoint": {
+    "format_version": 1,
+    "path": "pfba-lab\\kaggle-runs\\results\\cavc-retrain-200-v2\\latency_focused\\checkpoint.pt",
+    "seed": 13
+  },
+  "config": {
+    "alpha_rank": 0.2,
+    "batch_size": 128,
+    "epochs": 20,
+    "gamma": 0.97,
+    "lambda_l": 0.3,
+    "lambda_t": 0.4,
+    "lr": 0.0003,
+    "seed": 13,
+    "weight_e": 3.0,
+    "weight_m": 1.0
+  },
+  "cost_measurement_source": "pred_s/mt_s persisted by the source Kaggle run (cuda:0); local retraining does not re-measure inference cost",
+  "cost_topology": "serial",
+  "diagnostics": {
+    "action_q_stats": {
+      "b2h10": {
+        "max": 6.200678825378418,
+        "mean": -5.112390613119922,
+        "min": -23.997177124023438,
+        "std": 8.147438896713817
+      },
+      "b2h4": {
+        "max": 6.420844554901123,
+        "mean": -4.670720361486705,
+        "min": -24.185136795043945,
+        "std": 8.549802326180469
+      },
+      "b2h6": {
+        "max": 6.410452842712402,
+        "mean": -4.8189485945658594,
+        "min": -24.14814567565918,
+        "std": 8.426012167545455
+      },
+      "b4h10": {
+        "max": 6.2758073806762695,
+        "mean": -4.887086495936275,
+        "min": -23.87914276123047,
+        "std": 8.042784217778193
+      },
+      "b4h4": {
+        "max": 6.441430568695068,
+        "mean": -4.580343700736343,
+        "min": -24.114429473876953,
+        "std": 8.376368384797699
+      },
+      "b4h6": {
+        "max": 6.438704490661621,
+        "mean": -4.690760757527753,
+        "min": -24.06017303466797,
+        "std": 8.281325684743418
+      },
+      "b6h10": {
+        "max": 6.070402145385742,
+        "mean": -4.693960555599543,
+        "min": -23.567703247070312,
+        "std": 7.775701592691192
+      },
+      "b6h4": {
+        "max": 6.357155799865723,
+        "mean": -4.515251888899144,
+        "min": -23.976762771606445,
+        "std": 8.152962757988979
+      },
+      "b6h6": {
+        "max": 6.33942985534668,
+        "mean": -4.584852227123682,
+        "min": -23.896408081054688,
+        "std": 8.065273178438087
+      }
+    },
+    "delta_u_expensive": {
+      "fraction_positive_q": 0.36472945891783565,
+      "mean_delta_c": 1.1008764434999987,
+      "mean_delta_q": -0.0031997980717905538,
+      "median_delta_q": -0.3318750858306885,
+      "n": 499
+    },
+    "evaluation_split": "sentence_holdout",
+    "expected_cost": {
+      "guarded": 0.4103805157194649,
+      "v3": 0.35235458743188763
+    },
+    "guarded_action_counts": {
+      "b2h10": 6,
+      "b2h4": 210,
+      "b4h4": 8,
+      "b6h10": 28,
+      "b6h4": 99,
+      "read": 148
+    },
+    "n_states": 499,
+    "no_emit_auc": 0.6393769082870991,
+    "q_target_mae": 7.100189567453725,
+    "q_target_signed_mean": -3.2519949121382212,
+    "q_target_spearman": 0.06983087830961365,
+    "q_top1_match_fraction": 0.20440881763527055,
+    "read_advantage": {
+      "fraction_positive": 0.3867735470941884,
+      "mean": -0.319742489741363,
+      "p10": -1.2573573693935032,
+      "p50": -0.1669295047462469,
+      "p90": 0.4142005230247492
+    },
+    "risk_calibration": {
+      "buckets": 10,
+      "error_risk": {
+        "base_rate": 0.24315297261189045,
+        "brier": 0.18384553015919095,
+        "buckets": [
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.1,
+            "lo": 0.0,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": 0.0481099892363778,
+            "count": 830,
+            "hi": 0.2,
+            "lo": 0.1,
+            "mean_label": 0.23373493975903614,
+            "mean_predicted": 0.18562495052265834
+          },
+          {
+            "abs_gap": 0.007990014297437648,
+            "count": 3163,
+            "hi": 0.3,
+            "lo": 0.2,
+            "mean_label": 0.22889661713563073,
+            "mean_predicted": 0.23688663143306837
+          },
+          {
+            "abs_gap": 0.025026580305134383,
+            "count": 498,
+            "hi": 0.4,
+            "lo": 0.3,
+            "mean_label": 0.3493975903614458,
+            "mean_predicted": 0.3243710100563114
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.5,
+            "lo": 0.4,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.6,
+            "lo": 0.5,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.7,
+            "lo": 0.6,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.8,
+            "lo": 0.7,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.9,
+            "lo": 0.8,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 1.0,
+            "lo": 0.9,
+            "mean_label": null,
+            "mean_predicted": null
+          }
+        ],
+        "ece": 0.017293908546191443,
+        "mean_predicted": 0.23711375799702622
+      },
+      "n": 4491,
+      "no_emit": {
+        "base_rate": 0.36161211311511915,
+        "brier": 0.22000471824201345,
+        "buckets": [
+          {
+            "abs_gap": 0.04945544909907141,
+            "count": 225,
+            "hi": 0.1,
+            "lo": 0.0,
+            "mean_label": 0.035555555555555556,
+            "mean_predicted": 0.08501100465462696
+          },
+          {
+            "abs_gap": 0.04881766273874805,
+            "count": 731,
+            "hi": 0.2,
+            "lo": 0.1,
+            "mean_label": 0.1997264021887825,
+            "mean_predicted": 0.15090873945003444
+          },
+          {
+            "abs_gap": 0.08500963132657019,
+            "count": 908,
+            "hi": 0.3,
+            "lo": 0.2,
+            "mean_label": 0.3370044052863436,
+            "mean_predicted": 0.25199477395977343
+          },
+          {
+            "abs_gap": 0.07094409021077747,
+            "count": 1632,
+            "hi": 0.4,
+            "lo": 0.3,
+            "mean_label": 0.42463235294117646,
+            "mean_predicted": 0.353688262730399
+          },
+          {
+            "abs_gap": 0.03624332635308258,
+            "count": 980,
+            "hi": 0.5,
+            "lo": 0.4,
+            "mean_label": 0.4704081632653061,
+            "mean_predicted": 0.4341648369122235
+          },
+          {
+            "abs_gap": 0.15888194752875273,
+            "count": 15,
+            "hi": 0.6,
+            "lo": 0.5,
+            "mean_label": 0.6666666666666666,
+            "mean_predicted": 0.5077847191379139
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.7,
+            "lo": 0.6,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.8,
+            "lo": 0.7,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 0.9,
+            "lo": 0.8,
+            "mean_label": null,
+            "mean_predicted": null
+          },
+          {
+            "abs_gap": null,
+            "count": 0,
+            "hi": 1.0,
+            "lo": 0.9,
+            "mean_label": null,
+            "mean_predicted": null
+          }
+        ],
+        "ece": 0.0618313019409447,
+        "mean_predicted": 0.30473626699572465
+      },
+      "status": "ok",
+      "threshold_note": "Predicted probabilities come from an uncalibrated sigmoid. Use them as diagnostics or soft inputs only, never as a hard safety threshold."
+    },
+    "v3_action_counts": {
+      "b2h10": 5,
+      "b2h4": 178,
+      "b4h4": 8,
+      "b6h10": 20,
+      "b6h4": 95,
+      "read": 193
+    },
+    "v3_b6h10": 20,
+    "v3_h10_fraction": 0.08169934640522876,
+    "v3_read_fraction": 0.3867735470941884
+  },
+  "labels": "pfba-lab\\kaggle-runs\\results\\cavc-dev-200\\labels.jsonl",
+  "mode": "retrain",
+  "n_label_rows": 165,
+  "n_risk_calibration_targets": 4990,
+  "n_states": 2308,
+  "n_targets": 23080,
+  "n_train_targets": 18090,
+  "output_dir": "pfba-lab\\kaggle-runs\\results\\cavc-retrain-200-v2\\latency_focused",
+  "train_seconds": 169.05374030000166,
+  "trained": true,
+  "training": {
+    "emit_loss": 0.7462047327630568,
+    "epochs": 20,
+    "error_loss": 0.5511388407637742,
+    "final_loss": 3.618690887034334,
+    "n_samples": 18090,
+    "no_emit_loss": 0.6062286142876606,
+    "rank_loss": 0.7727425141839792,
+    "target_calls": 20,
+    "target_seconds": 100.23078339999847,
+    "value_loss": 2.5123562844383796
+  },
+  "training_device": "cpu"
+}

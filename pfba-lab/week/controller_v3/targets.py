@@ -81,6 +81,7 @@ def build_action_targets(
     next_actions: Sequence[Action] = (),
     src_words_after: int | None = None,
     tgt_words_after_per_outcome: Sequence[int] | None = None,
+    wall_targets: Sequence[float] | None = None,
     terminal: bool = False,
     terminal_value: float | None = None,
     terminal_values: Sequence[float] | None = None,
@@ -162,33 +163,24 @@ def build_action_targets(
             "terminal_values must pair one-to-one with outcomes: got "
             f"{len(terminal_values)} values for {len(outcome_list)} outcomes"
         )
+    if wall_targets is not None and len(wall_targets) != len(outcome_list):
+        raise ValueError(
+            "wall_targets must pair one-to-one with outcomes: got "
+            f"{len(wall_targets)} values for {len(outcome_list)} outcomes"
+        )
 
     current_tgt = int(round(float(state.numeric[TGT_WORDS_INDEX])))
 
     targets: list[ActionTarget] = []
     for index, outcome in enumerate(outcome_list):
         action = outcome.action
-        if terminal:
-            if terminal_values is not None:
-                value_target = float(terminal_values[index])
-            else:
-                value_target = (
-                    float(terminal_value) if terminal_value is not None else 0.0
-                )
-        elif src_words_after is not None:
+        if src_words_after is not None:
             if tgt_words_after_per_outcome is not None:
                 words_after = int(tgt_words_after_per_outcome[index])
             else:
                 words_after = current_tgt + int(outcome.emitted)
             backlog_after = max(
                 0.0, float(src_words_after) - words_after / resolved_rho
-            )
-            value_target = immediate_reward(
-                int(outcome.matched),
-                int(outcome.incorrect),
-                backlog_after,
-                advance,
-                reward_cfg,
             )
         else:
             # Legacy ablation: advance the pre-action backlog by the source
@@ -197,6 +189,15 @@ def build_action_targets(
                 0.0,
                 float(backlog) + advance - int(outcome.emitted) / resolved_rho,
             )
+
+        if terminal:
+            if terminal_values is not None:
+                value_target = float(terminal_values[index])
+            else:
+                value_target = (
+                    float(terminal_value) if terminal_value is not None else 0.0
+                )
+        else:
             value_target = immediate_reward(
                 int(outcome.matched),
                 int(outcome.incorrect),
@@ -204,6 +205,32 @@ def build_action_targets(
                 advance,
                 reward_cfg,
             )
+
+        if cfg.tri_value:
+            # V5 separates translation quality from content lag. Terminal rows
+            # still carry the action's own word-level quality; the disabled
+            # proxy is the length-difference terminal value, not this term.
+            quality_target = float(
+                cfg.weight_m * int(outcome.matched)
+                - cfg.weight_e * int(outcome.incorrect)
+            )
+            anchor = max(0.0, float(cfg.lag_anchor))
+            excess = max(0.0, backlog_after - anchor)
+            delay_target = float(advance) * (
+                backlog_after + float(cfg.convex_kappa) * excess * excess
+            )
+            wall_target = (
+                None if wall_targets is None else float(wall_targets[index])
+            )
+            if terminal:
+                # The EOS full-source translation is not one of the
+                # counterfactual actions; without this term the wall head
+                # never learns the sentence's most expensive MT call.
+                wall_target = (wall_target or 0.0) + float(
+                    cfg.terminal_eos_wall_s
+                )
+        else:
+            quality_target = delay_target = wall_target = None
 
         # READ has no write head, so its auxiliary write targets are unused by
         # the trainer. They are still serialized with zero values so every row
@@ -234,6 +261,9 @@ def build_action_targets(
                 next_state=successors[index],
                 next_actions=row_next_actions,
                 terminal=bool(terminal),
+                quality_target=quality_target,
+                delay_target=delay_target,
+                wall_target=wall_target,
             )
         )
     return targets
